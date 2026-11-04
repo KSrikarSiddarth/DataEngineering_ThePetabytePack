@@ -1,0 +1,169 @@
+# stream-config.yaml — single source of truth for how taxi data is streamed.
+#
+# Who reads what:
+#   kafka, topics   -> M1  kafka-init (creates the topics)
+#   streaming       -> M2  producer (volume, pacing, delivery)
+#   data_quality    -> M2  producer (fault injection) and M3 Spark (validation counters)
+#   processing      -> M3/M4 Spark job (watermark, windows, trigger)
+#
+# Column names below come from the TLC data dictionaries as recalled and MUST be
+# verified against the real parquet files in M2 (see PLAN.md section 6.1).
+# Environment variables (.env) may override a few values; see README/PLAN.md.
+
+version: 1
+
+# ---------------------------------------------------------------------------
+# Kafka connection and topics (consumed by M1)
+# ---------------------------------------------------------------------------
+kafka:
+  bootstrap_servers_internal: kafka:29092   # for containers on the compose network
+  bootstrap_servers_host: localhost:9092    # for tools running on the host
+
+topic_defaults:
+  partitions: 3
+  replication_factor: 1                     # single broker
+  retention_hours: 24
+  cleanup_policy: delete
+  compression_type: producer               # keep whatever the producer used
+
+topics:
+  - name: taxi.yellow.raw
+    dataset: yellow
+  - name: taxi.green.raw
+    dataset: green
+  - name: taxi.fhv.raw
+    dataset: fhv
+  - name: taxi.hvfhv.raw
+    dataset: hvfhv
+    partitions: 6                           # largest dataset
+  - name: taxi.trips.invalid
+    dataset: null                           # rejected rows from Spark
+    partitions: 1
+    retention_hours: 168                    # keep rejects a week for inspection
+
+# ---------------------------------------------------------------------------
+# Streaming volume and pacing (consumed by M2)
+# ---------------------------------------------------------------------------
+streaming:
+  input_dir: /data                          # mounted read-only in the producer
+  months: ["2026-01"]                       # which monthly files to replay, in order
+  seed: 42                                  # makes sampling and fault injection repeatable
+
+  pacing:
+    replay_speedup: 3600                    # 3600 = 1 simulated hour per real second; 0 = as fast as possible
+    max_events_per_second: 0                # hard cap per producer; 0 = unlimited
+    shared_clock: true                      # all datasets use the same simulated start time
+    start_offset: "2026-01-01T00:00:00"     # simulated clock start (skip earlier trips)
+
+  volume:
+    sample_fraction: 1.0                    # 1.0 = every row; 0.1 = random 10%
+    max_records:                            # per dataset; 0 = no cap
+      yellow: 0
+      green: 0
+      fhv: 0
+      hvfhv: 500000                         # HVFHV is tens of millions of rows; see decisions.md D14
+    read_batch_rows: 5000                   # parquet rows read at a time (memory bound)
+
+  delivery:
+    acks: all
+    enable_idempotence: true
+    compression: lz4
+    linger_ms: 20
+    batch_size_bytes: 65536
+    retries: 5
+    connect_retry_seconds: 60               # wait this long for Kafka at startup
+
+  logging:
+    progress_every_records: 10000
+
+# ---------------------------------------------------------------------------
+# Data quality: faults deliberately injected into the stream (consumed by M2)
+# All rates are probabilities per record in [0, 1]. They are applied on top of
+# nulls and bad rows that already exist naturally in the TLC files.
+# ---------------------------------------------------------------------------
+data_quality:
+  active_profile: realistic                 # clean | realistic | messy | custom
+
+  profiles:
+    clean:
+      null_rate: 0.0
+      invalid_rate: 0.0
+      duplicate_rate: 0.0
+      late_rate: 0.0
+      out_of_order_rate: 0.0
+      malformed_json_rate: 0.0
+      schema_drift_rate: 0.0
+
+    realistic:
+      null_rate: 0.02                       # 2% of records get 1+ eligible fields nulled
+      invalid_rate: 0.005                   # 0.5% get a business-rule violation
+      duplicate_rate: 0.001
+      late_rate: 0.02
+      out_of_order_rate: 0.05
+      malformed_json_rate: 0.0005
+      schema_drift_rate: 0.0
+
+    messy:
+      null_rate: 0.15
+      invalid_rate: 0.05
+      duplicate_rate: 0.02
+      late_rate: 0.10
+      out_of_order_rate: 0.20
+      malformed_json_rate: 0.01
+      schema_drift_rate: 0.01
+
+    custom: {}                              # fill in any of the keys above to override
+
+  null_injection:
+    max_fields_per_record: 2                # nulls added to at most this many fields in a record
+    eligible_fields:                        # never null the key or event-time columns
+      yellow: [passenger_count, RatecodeID, store_and_fwd_flag, congestion_surcharge, Airport_fee]
+      green: [passenger_count, RatecodeID, store_and_fwd_flag, trip_type, congestion_surcharge]
+      fhv: [PUlocationID, DOlocationID, dispatching_base_num]
+      hvfhv: [originating_base_num, on_scene_datetime, tips, driver_pay]
+
+  invalid_injection:
+    types:                                  # one is picked at random; skipped if the dataset lacks the field
+      dropoff_before_pickup: 0.30
+      negative_amount: 0.25                 # fare/total set below zero (not FHV)
+      negative_distance: 0.15               # not FHV
+      pickup_out_of_range: 0.15             # timestamp moved outside the replayed month
+      unknown_location_id: 0.15             # location ID set outside the lookup table (e.g. 999)
+    unknown_location_id_value: 999
+
+  duplicates:
+    copies: 1                               # extra copies sent per duplicated record
+    max_gap_records: 100                    # the copy appears within this many records
+
+  late_data:
+    min_delay_minutes: 5
+    max_delay_minutes: 90                   # event time lags the simulated clock by this much; > watermark means dropped by Spark
+
+  out_of_order:
+    shuffle_window_records: 50              # records are shuffled within a window this size
+
+  malformed_json:
+    mode: truncate                          # truncate | bad_encoding | empty_value
+
+  schema_drift:
+    extra_field_name: _unexpected_field     # add an unknown column to the message
+
+# ---------------------------------------------------------------------------
+# Stream processing (consumed by M3/M4)
+# ---------------------------------------------------------------------------
+processing:
+  starting_offsets: earliest
+  max_offsets_per_trigger: 50000            # bounds micro-batch size; 0 = unlimited
+  trigger_interval_seconds: 10
+  watermark_minutes: 10
+  shuffle_partitions: 8
+  windows:
+    zone_hourly: 1 hour
+    service_hourly: 1 hour
+    payment: 5 minutes
+  validation:
+    expected_month: "2026-01"
+    date_tolerance_days: 1                  # accepted slack around the expected month
+    max_trip_hours: 24
+  output_dir: /output
+  checkpoint_dir: /output/checkpoints
