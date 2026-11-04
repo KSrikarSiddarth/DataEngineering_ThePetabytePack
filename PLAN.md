@@ -19,7 +19,7 @@ A simple, locally runnable big data pipeline that replays NYC TLC trip records (
 **Out of scope (initially)**
 - Cloud deployment, multi-broker clusters, schema registry, auth, dashboards (stretch goal only).
 
-## 3. Existing Inputs (in project root)
+## 3. Existing Inputs (in `data/`; fetch the trip files with `python scripts/download_data.py`)
 
 **Data source:** NYC TLC Trip Record Data — https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page (monthly Parquet files for Yellow, Green, FHV, and HVFHV trips, plus the data dictionaries, zone lookup CSV, and taxi zone shapefile). Other months can be downloaded from there to extend the replay.
 
@@ -94,20 +94,20 @@ Pin all image versions; keep Spark and its Kafka connector (`spark-sql-kafka-0-1
 |---|---|---|---|---|---|
 | Yellow | `taxi.yellow.raw` | `yellow_tripdata_YYYY-MM.parquet` | `tpep_pickup_datetime` | `PULocationID` | Full fare fields |
 | Green | `taxi.green.raw` | `green_tripdata_YYYY-MM.parquet` | `lpep_pickup_datetime` | `PULocationID` | `lpep_*` times, `trip_type`, `ehail_fee` |
-| FHV | `taxi.fhv.raw` | `fhv_tripdata_YYYY-MM.parquet` | `pickup_datetime` | `PUlocationID` | No fare/distance fields; location IDs often null |
+| FHV | `taxi.fhv.raw` | `fhv_tripdata_YYYY-MM.parquet` | `pickup_datetime` | `dispatching_base_num` | No fare/distance fields; `PUlocationID` is ~85% null, so it cannot be the key |
 | HVFHV | `taxi.hvfhv.raw` | `fhvhv_tripdata_YYYY-MM.parquet` | `pickup_datetime` | `PULocationID` | Driver pay, wait times, shared-ride flags; very large |
 
-File patterns and column names above are from the data dictionaries as recalled and **must be verified** against the actual files and PDFs in M2. Each dataset gets its own explicit schema in `specs/`.
+File patterns and column names above were **verified against the real 2026-01 files in M2**. The full schemas and the data findings are in `specs/raw-schemas.md`, and the machine-readable copy is `producer/datasets.yaml`.
 
 **Yellow (`taxi.yellow.raw`)**
 - Key: `PULocationID` as string (keeps partition affinity by pickup zone).
-- Value: JSON, one trip per message, fields following the yellow data dictionary: `VendorID, tpep_pickup_datetime, tpep_dropoff_datetime, passenger_count, trip_distance, RatecodeID, store_and_fwd_flag, PULocationID, DOLocationID, payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount, improvement_surcharge, total_amount, congestion_surcharge, Airport_fee` (verify exact column set against the parquet before finalizing; add any new columns such as `cbd_congestion_fee`).
+- Value: JSON, one trip per message, fields following the yellow data dictionary: `VendorID, tpep_pickup_datetime, tpep_dropoff_datetime, passenger_count, trip_distance, RatecodeID, store_and_fwd_flag, PULocationID, DOLocationID, payment_type, fare_amount, extra, mta_tax, tip_amount, tolls_amount, improvement_surcharge, total_amount, congestion_surcharge, Airport_fee` (verified against the file; it also has `cbd_congestion_fee`; see `specs/raw-schemas.md`).
 - Timestamps: ISO-8601 strings. Nulls preserved as JSON `null`.
 - Partitions: 3 per topic (HVFHV: 6). Retention: 1 day. JSON, ISO-8601 timestamps, and null handling follow the Yellow rules for every dataset.
 
 ### 6.2 Producer behavior
 - Reads parquet in batches (pyarrow) — never loads the whole file into memory.
-- Sorts by `tpep_pickup_datetime` and replays with configurable speedup `REPLAY_SPEEDUP` (e.g. 3600 = 1 simulated hour per real second); `0` = as fast as possible.
+- Sorts by the dataset's pickup column (the TLC files are not sorted; the sort runs on indices to bound memory) and replays with configurable speedup `REPLAY_SPEEDUP` (e.g. 3600 = 1 simulated hour per real second); `0` = as fast as possible.
 - One code path for all datasets: `DATASET` (yellow|green|fhv|hvfhv) selects topic, file pattern, event-time column, and key column from `producer/datasets.yaml`.
 - Config via env vars: `DATASET`, `KAFKA_BOOTSTRAP`, `REPLAY_SPEEDUP`, `MAX_RECORDS` (0 = all), `DATA_DIR`. HVFHV defaults to a capped `MAX_RECORDS` (see Decisions) because of its volume.
 - All four producers use the same simulated clock (`REPLAY_SPEEDUP` applied to the same start time) so the streams stay roughly time-aligned.

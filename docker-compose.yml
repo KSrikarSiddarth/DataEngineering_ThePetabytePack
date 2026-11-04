@@ -6,6 +6,33 @@
 
 name: nyc-taxi-stream
 
+# M2 — producers. One image, one service per dataset. Not started by default:
+#   docker compose --profile producers up producer-green
+#   MAX_RECORDS=1000 REPLAY_SPEEDUP=0 QUALITY_PROFILE=clean docker compose --profile producers up producer-yellow
+# Empty env values fall back to stream-config.yaml.
+x-producer: &producer
+  profiles: ["producers"]
+  build:
+    context: ./producer
+    args:
+      PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+  depends_on:
+    kafka-init:
+      condition: service_completed_successfully
+  environment: &producer-env
+    KAFKA_BOOTSTRAP: kafka:29092
+    CONFIG_PATH: /config/stream-config.yaml
+    DATA_DIR: /data
+    STATS_DIR: /output/producer-stats
+    REPLAY_SPEEDUP: ${REPLAY_SPEEDUP:-}
+    MAX_RECORDS: ${MAX_RECORDS:-}
+    QUALITY_PROFILE: ${QUALITY_PROFILE:-}
+  volumes:
+    - ./data:/data:ro
+    - ./output:/output
+    - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+  restart: "no"
+
 services:
   kafka:
     image: apache/kafka:${KAFKA_VERSION:-3.9.0}
@@ -66,6 +93,30 @@ services:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       DYNAMIC_CONFIG_ENABLED: "false"
+
+  producer-yellow:
+    <<: *producer
+    environment:
+      <<: *producer-env
+      DATASET: yellow
+
+  producer-green:
+    <<: *producer
+    environment:
+      <<: *producer-env
+      DATASET: green
+
+  producer-fhv:
+    <<: *producer
+    environment:
+      <<: *producer-env
+      DATASET: fhv
+
+  producer-hvfhv:
+    <<: *producer
+    environment:
+      <<: *producer-env
+      DATASET: hvfhv
 
 volumes:
   kafka-data:

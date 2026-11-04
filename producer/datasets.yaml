@@ -1,0 +1,127 @@
+# Per-dataset producer spec. Column lists and types were read from the real
+# 2026-01 parquet files (see specs/raw-schemas.md). Types: int | float | string | timestamp.
+#
+# pickup_col       event-time column; the replay is sorted by it and paced on it
+# dropoff_col      used by the dropoff_before_pickup fault
+# key_col          Kafka message key (partition affinity); never nulled by fault injection
+# location_cols    columns set to an unknown ID by the unknown_location_id fault
+# amount_cols      columns made negative by the negative_amount fault (empty = fault not applicable)
+# distance_col     column made negative by the negative_distance fault (null = not applicable)
+
+datasets:
+  yellow:
+    topic: taxi.yellow.raw
+    file_prefix: yellow_tripdata
+    pickup_col: tpep_pickup_datetime
+    dropoff_col: tpep_dropoff_datetime
+    key_col: PULocationID
+    location_cols: [PULocationID, DOLocationID]
+    amount_cols: [fare_amount, total_amount]
+    distance_col: trip_distance
+    columns:
+      VendorID: int
+      tpep_pickup_datetime: timestamp
+      tpep_dropoff_datetime: timestamp
+      passenger_count: int
+      trip_distance: float
+      RatecodeID: int
+      store_and_fwd_flag: string
+      PULocationID: int
+      DOLocationID: int
+      payment_type: int
+      fare_amount: float
+      extra: float
+      mta_tax: float
+      tip_amount: float
+      tolls_amount: float
+      improvement_surcharge: float
+      total_amount: float
+      congestion_surcharge: float
+      Airport_fee: float
+      cbd_congestion_fee: float
+
+  green:
+    topic: taxi.green.raw
+    file_prefix: green_tripdata
+    pickup_col: lpep_pickup_datetime
+    dropoff_col: lpep_dropoff_datetime
+    key_col: PULocationID
+    location_cols: [PULocationID, DOLocationID]
+    amount_cols: [fare_amount, total_amount]
+    distance_col: trip_distance
+    columns:
+      VendorID: int
+      lpep_pickup_datetime: timestamp
+      lpep_dropoff_datetime: timestamp
+      store_and_fwd_flag: string
+      RatecodeID: int
+      PULocationID: int
+      DOLocationID: int
+      passenger_count: int
+      trip_distance: float
+      fare_amount: float
+      extra: float
+      mta_tax: float
+      tip_amount: float
+      tolls_amount: float
+      ehail_fee: float
+      improvement_surcharge: float
+      total_amount: float
+      payment_type: int
+      trip_type: int
+      congestion_surcharge: float
+      cbd_congestion_fee: float
+
+  fhv:
+    topic: taxi.fhv.raw
+    file_prefix: fhv_tripdata
+    pickup_col: pickup_datetime
+    dropoff_col: dropOff_datetime
+    key_col: dispatching_base_num          # PUlocationID is ~85% null in the 2026-01 file
+    location_cols: [PUlocationID, DOlocationID]
+    amount_cols: []
+    distance_col: null
+    columns:
+      dispatching_base_num: string
+      pickup_datetime: timestamp
+      dropOff_datetime: timestamp
+      PUlocationID: int
+      DOlocationID: int
+      SR_Flag: int
+      Affiliated_base_number: string
+
+  hvfhv:
+    topic: taxi.hvfhv.raw
+    file_prefix: fhvhv_tripdata
+    pickup_col: pickup_datetime
+    dropoff_col: dropoff_datetime
+    key_col: PULocationID
+    location_cols: [PULocationID, DOLocationID]
+    amount_cols: [base_passenger_fare, driver_pay]
+    distance_col: trip_miles
+    columns:
+      hvfhs_license_num: string
+      dispatching_base_num: string
+      originating_base_num: string
+      request_datetime: timestamp
+      on_scene_datetime: timestamp
+      pickup_datetime: timestamp
+      dropoff_datetime: timestamp
+      PULocationID: int
+      DOLocationID: int
+      trip_miles: float
+      trip_time: int
+      base_passenger_fare: float
+      tolls: float
+      bcf: float
+      sales_tax: float
+      congestion_surcharge: float
+      airport_fee: float
+      tips: float
+      driver_pay: float
+      shared_request_flag: string
+      shared_match_flag: string
+      access_a_ride_flag: string
+      wav_request_flag: string
+      wav_match_flag: string
+      cbd_congestion_fee: float

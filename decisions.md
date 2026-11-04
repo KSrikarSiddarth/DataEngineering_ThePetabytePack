@@ -23,6 +23,9 @@ Every significant choice in this project, the alternatives considered, and why w
 | D15 | Data acquisition | Host download script | 🟡 |
 | D16 | Development method | Spec-driven, milestone by milestone | ✅ |
 | D17 | Version control | Git, with `data/` ignored | ✅ |
+| D18 | Replay ordering | Index-based sort by pickup time | 🟡 |
+| D19 | FHV message key | `dispatching_base_num` | 🟡 |
+| D20 | Fault injection | Seeded, config-driven, tagged in a Kafka header | 🟡 |
 
 ---
 
@@ -251,6 +254,41 @@ Every significant choice in this project, the alternatives considered, and why w
 **Alternatives**
 - *Git LFS or DVC for data:* useful when data must be versioned; unnecessary here since the source is public.
 - *No version control:* rules out history and rollback.
+
+---
+
+## D18 — Index-based sort for replay 🟡
+
+**Choice:** The producer reads only the pickup column, computes the sort order (after sampling and the record cap), then loads just the selected rows and sorts them.
+
+**Why:** None of the four 2026-01 files is sorted by pickup time, so a replay needs a sort. This way a capped HVFHV replay sorts 500k rows, not 20.9M, and memory stays bounded.
+
+**Alternatives**
+- *Replay in file order:* simplest, but event times jump around and the watermark and window results become meaningless.
+- *Load and sort the whole file:* fine for Green and FHV, but HVFHV needs several GB.
+- *Per-day bucket files on disk:* handles the uncapped HVFHV case, but is more code. A fallback if the uncapped month is ever needed.
+
+**Trade-off:** An uncapped HVFHV replay still sorts all selected rows in memory, so keep the cap (D14).
+
+---
+
+## D19 — FHV is keyed by `dispatching_base_num` 🟡
+
+**Choice:** The other datasets use `PULocationID` as the Kafka key. FHV uses `dispatching_base_num`.
+
+**Why:** In the real FHV file `PUlocationID` is null in about 85% of rows, so keying by it would send most messages with no key and lose partition affinity. `dispatching_base_num` is never null.
+
+**Alternatives:** keep `PUlocationID` (mostly unkeyed), or no key at all (round-robin). Both give up ordering per key.
+
+---
+
+## D20 — Seeded, config-driven fault injection, tagged in a header 🟡
+
+**Choice:** Quality faults come from `stream-config.yaml` profiles (`clean`, `realistic`, `messy`), are driven by a fixed random seed, and are recorded in a `fault` Kafka header.
+
+**Why:** Repeatable runs make tests and reconciliation possible. Header tags let us tell injected faults from the natural ones in the data (which are substantial), without changing the message body that Spark parses.
+
+**Alternatives:** inject in Spark (hides the fault from the broker and from the raw topic), put the tag in the JSON body (pollutes the schema), or no tagging (can't measure what the validation step should have caught).
 
 ---
 

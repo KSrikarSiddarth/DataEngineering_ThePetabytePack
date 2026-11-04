@@ -7,8 +7,8 @@ This file tells the build as a story, one chapter per milestone from `PLAN.md`. 
 | Chapter | Milestone | Status |
 |---|---|---|
 | 0 | Setting the stage | ✅ |
-| 1 | Infrastructure up (Kafka) | ⬜ |
-| 2 | The producer | ⬜ |
+| 1 | Infrastructure up (Kafka) | 🚧 written, not yet run (Docker unavailable on this machine) |
+| 2 | The producer | 🚧 built and tested without Kafka; Kafka path not run |
 | 3 | Spark: parse, validate, enrich | ⬜ |
 | 4 | Spark: windowed aggregations | ⬜ |
 | 5 | End-to-end with Compose | ⬜ |
@@ -33,7 +33,31 @@ This file tells the build as a story, one chapter per milestone from `PLAN.md`. 
 
 ---
 
-## Chapter 1 — Infrastructure up ⬜
+## Chapter 1 — Infrastructure up 🚧
+
+**Status.** The files are written. The YAML parses and the init script compiles, but nothing has been run against Docker, because Docker can't run on this machine (see `installation.md` and the WSL test). Run the verification below on a machine with Docker before marking this chapter done.
+
+**What was built**
+- `stream-config.yaml`: the single configuration file for streaming. Chapter 1 uses its `kafka`, `topic_defaults` and `topics` sections. The rest is read in later chapters: `streaming` (volume, pacing, delivery), `data_quality` (null, invalid, duplicate, late, out-of-order, malformed and schema-drift rates, with `clean`, `realistic` and `messy` profiles), and `processing` (watermark, trigger, windows).
+- `.env`: pinned versions (`KAFKA_VERSION=3.9.0`, Kafka UI `v0.7.2`) and host ports.
+- `docker-compose.yml`: `kafka` (KRaft, single broker, auto topic creation off, healthcheck), `kafka-init`, and `kafka-ui` behind the `ui` profile.
+- `kafka-init/`: a small Python image whose `create_topics.py` reads `stream-config.yaml`, creates every topic, treats existing topics as success, and fails if any topic is missing afterwards.
+
+**Why topics come from the config file.** Auto-creation is disabled, so a typo in a topic name fails loudly instead of silently creating a new topic. Partitions and retention live in one place.
+
+**Run it**
+```
+docker compose up -d kafka kafka-init
+docker compose logs kafka-init
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:29092 --list
+docker compose --profile ui up -d     # optional UI at http://localhost:8080
+```
+
+**Not yet verified:** the `apache/kafka:3.9.0` listener settings, the healthcheck, and the `confluent-kafka==2.6.1` admin calls. If the healthcheck or init fails, those are the first places to look.
+
+---
+
+## Chapter 1 (original plan)
 
 **The story.** Before any taxi can ride, the road has to exist. Kafka is that road: a durable, ordered log that sits between whoever produces trips and whoever consumes them. We start with Kafka alone and prove it works before adding anything else.
 
@@ -41,7 +65,7 @@ This file tells the build as a story, one chapter per milestone from `PLAN.md`. 
 1. Create `.env` with pinned versions and names: `KAFKA_VERSION`, `TOPIC_INVALID=taxi.trips.invalid`. Raw topic names (`taxi.yellow.raw`, `taxi.green.raw`, `taxi.fhv.raw`, `taxi.hvfhv.raw`) are defined in the producer's `datasets.yaml`.
 2. Create `docker-compose.yml` with:
    - `kafka`: the `apache/kafka` image in KRaft mode (no ZooKeeper), one broker. It has two listeners: `9092` for the host and `29092` for other containers. Add a healthcheck that runs `kafka-topics.sh --list`.
-   - `kafka-init`: a one-shot container that waits for the broker to be healthy, creates all five topics (four raw ones with 3 partitions, 6 for HVFHV, 1-day retention, plus the invalid topic), and exits.
+   - `kafka-init`: a one-shot container that waits for the broker to be healthy, creates all five topics from `stream-config.yaml` (four raw ones with 3 partitions, 6 for HVFHV, 1-day retention, plus the invalid topic), and exits.
    - `kafka-ui` (optional): the UI on port 8080 for looking at messages.
 3. Start it: `docker compose up -d kafka kafka-init`.
 
@@ -53,7 +77,32 @@ This file tells the build as a story, one chapter per milestone from `PLAN.md`. 
 
 ---
 
-## Chapter 2 — The producer ⬜
+## Chapter 2 — The producer 🚧
+
+**Status.** The producer is written and tested against the real data, but only without Kafka. Docker isn't available on this machine, so the Kafka delivery path (`KafkaSink`, `wait_for_kafka`, the Compose services) has not been run.
+
+**What happened**
+- Downloaded the Green, FHV and HVFHV files with `scripts/download_data.py` (URL pattern checked, files validated as Parquet): Green 40,272 rows, FHV 1,941,722, HVFHV 20,940,373.
+- Read the real schemas and profiled the files. This replaced the recalled column names in the plan, and turned up four things that changed the design:
+  - No file is sorted by pickup time, so the producer sorts on indices, which keeps memory bounded even for HVFHV.
+  - FHV's `PUlocationID` is about 85% null, so FHV messages are keyed by `dispatching_base_num` instead.
+  - Yellow already has about 29% nulls in several columns, and a few Yellow and Green rows fall outside January. The data has real quality problems before any are injected.
+  - FHV and HVFHV use different column names and have no `total_amount` (details in `specs/raw-schemas.md`).
+- Built `producer/`: `datasets.yaml` (per-dataset spec), `config.py`, `replay.py` (sorted, capped, sampled reads), `faults.py` (the quality profiles from `stream-config.yaml`), `pacing.py`, `serialize.py`, `producer.py`, a Dockerfile, and four Compose services under the `producers` profile.
+- Injected faults are tagged in a Kafka header (`fault`), so later steps can tell injected problems from natural ones. `--dry-run` writes NDJSON instead of sending to Kafka.
+
+**Verified here:** 43 pytest tests pass (schemas against the real files, fault rates, ordering, pacing, malformed JSON, and a 1000-message dry run for each of the four datasets). Each dry run produced exactly 1000 messages, with keys, sorted by pickup time.
+
+**Not verified:** sending to a real broker, the Compose producer services, and throughput against Kafka. Run on a machine with Docker:
+```
+docker compose up -d kafka kafka-init
+MAX_RECORDS=1000 REPLAY_SPEEDUP=0 QUALITY_PROFILE=clean docker compose --profile producers up producer-yellow producer-green producer-fhv producer-hvfhv
+```
+Then check each topic's message count, for example with `kafka-get-offsets.sh` or Kafka UI.
+
+**Known limit:** HVFHV with `max_records: 0` would sort all 20.9M rows in memory (the code prints a warning above 5M rows). Keep the default cap of 500,000.
+
+### Original plan for this chapter
 
 **The story.** The data is a historical file, but streaming needs events arriving over time. The producer plays the part of the taxis: it reads the file in order and publishes each trip to Kafka at a controllable speed.
 
@@ -155,4 +204,6 @@ Late and out-of-order data to show the watermark at work; aggregates published b
 | Date | Change |
 |---|---|
 | 2026-11-02 | Created `PLAN.md`, `.gitignore`, and this file. No pipeline code written yet. |
+| 2026-11-04 | M2 built: data download script, verified schemas (`specs/raw-schemas.md`), config-driven producer with fault injection, 43 passing tests. Kafka path not run (no Docker). |
+| 2026-11-04 | M1 files written: `stream-config.yaml`, `.env`, `docker-compose.yml`, `kafka-init/`. Not run: no Docker on this machine. |
 | 2026-11-02 | Moved Green, FHV, and HVFHV into the MVP: one topic and producer service per dataset, a unified trip schema in Spark, cross-service aggregations. |

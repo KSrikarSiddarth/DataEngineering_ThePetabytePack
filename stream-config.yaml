@@ -53,7 +53,7 @@ streaming:
     replay_speedup: 3600                    # 3600 = 1 simulated hour per real second; 0 = as fast as possible
     max_events_per_second: 0                # hard cap per producer; 0 = unlimited
     shared_clock: true                      # all datasets use the same simulated start time
-    start_offset: "2026-01-01T00:00:00"     # simulated clock start (skip earlier trips)
+    start_offset: "2026-01-01T00:00:00"     # simulated clock start; trips before it are sent immediately (a few Dec 2025 rows exist)
 
   volume:
     sample_fraction: 1.0                    # 1.0 = every row; 0.1 = random 10%
@@ -119,7 +119,7 @@ data_quality:
     eligible_fields:                        # never null the key or event-time columns
       yellow: [passenger_count, RatecodeID, store_and_fwd_flag, congestion_surcharge, Airport_fee]
       green: [passenger_count, RatecodeID, store_and_fwd_flag, trip_type, congestion_surcharge]
-      fhv: [PUlocationID, DOlocationID, dispatching_base_num]
+      fhv: [DOlocationID, Affiliated_base_number]   # PUlocationID is already ~85% null naturally
       hvfhv: [originating_base_num, on_scene_datetime, tips, driver_pay]
 
   invalid_injection:
