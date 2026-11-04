@@ -97,7 +97,7 @@ datasets:
     dropoff_col: dropoff_datetime
     key_col: PULocationID
     location_cols: [PULocationID, DOLocationID]
-    amount_cols: [base_passenger_fare, driver_pay]
+    amount_cols: [base_passenger_fare, tips]   # driver_pay is not in the unified schema, so a fault there would be invisible to Spark
     distance_col: trip_miles
     columns:
       hvfhs_license_num: string
@@ -125,3 +125,54 @@ datasets:
       wav_request_flag: string
       wav_match_flag: string
       cbd_congestion_fee: float
+
+# ---------------------------------------------------------------------------
+# Unified trip model (used by the Spark job, M3). Maps each unified column to a
+# source column of the dataset, or null when the dataset has no such field.
+# Every source column NOT named here is kept as JSON in the `extras` column.
+# ---------------------------------------------------------------------------
+normalize:
+  yellow:
+    pickup: tpep_pickup_datetime
+    dropoff: tpep_dropoff_datetime
+    pu_location: PULocationID
+    do_location: DOLocationID
+    trip_distance: trip_distance
+    passenger_count: passenger_count
+    fare_amount: fare_amount
+    tip_amount: tip_amount
+    total_amount: total_amount
+    payment_type: payment_type
+  green:
+    pickup: lpep_pickup_datetime
+    dropoff: lpep_dropoff_datetime
+    pu_location: PULocationID
+    do_location: DOLocationID
+    trip_distance: trip_distance
+    passenger_count: passenger_count
+    fare_amount: fare_amount
+    tip_amount: tip_amount
+    total_amount: total_amount
+    payment_type: payment_type
+  fhv:
+    pickup: pickup_datetime
+    dropoff: dropOff_datetime
+    pu_location: PUlocationID
+    do_location: DOlocationID
+    trip_distance: null
+    passenger_count: null
+    fare_amount: null
+    tip_amount: null
+    total_amount: null
+    payment_type: null
+  hvfhv:
+    pickup: pickup_datetime
+    dropoff: dropoff_datetime
+    pu_location: PULocationID
+    do_location: DOLocationID
+    trip_distance: trip_miles
+    passenger_count: null
+    fare_amount: base_passenger_fare
+    tip_amount: tips
+    total_amount: null
+    payment_type: null

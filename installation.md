@@ -103,6 +103,8 @@ Add `.venv/` to `.gitignore`.
 - Shell scripts with CRLF line endings fail inside Linux containers. Add a `.gitattributes` with `*.sh text eol=lf` once scripts exist.
 - Bind mounts from Windows are slower than Linux filesystems, but fine at this project's scale. If permissions cause trouble, use a named Docker volume for `output/`.
 - Restart the terminal after installing anything that changes PATH.
+- **Running the Spark tests or `stream_job.py` on the host** needs Java 8, 11 or 17 on PATH and `pip install -r requirements-dev.txt`. A machine-wide `SPARK_HOME` pointing at a different Spark version (this VM has Spark 3.3.2) overrides the pip-installed PySpark and fails with py4j errors such as `legacyInferArrayTypeFromFirstElement does not exist`. The test suite sets `SPARK_HOME` and `PYSPARK_PYTHON` for its own process; for manual runs set them in that shell only: `$env:SPARK_HOME = (python -c "import os,pyspark;print(os.path.dirname(pyspark.__file__))")`.
+- **Long paths:** Windows' 260-character path limit breaks file reads in deeply nested folders (it made pyarrow report "path not found" for files that exist). Keep test output in a short path such as `%TEMP%\m3run`.
 
 ## 6. Readiness check
 

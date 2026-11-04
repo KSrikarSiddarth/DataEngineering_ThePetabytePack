@@ -100,6 +100,22 @@ def test_each_invalid_type_breaks_its_rule(green_spec, stream_cfg, records, kind
         assert 999 in (row["PULocationID"], row["DOLocationID"])
 
 
+def test_null_injection_never_erases_an_injected_invalid_value(specs, stream_cfg):
+    """FHV's DOlocationID is null-eligible; a 999 injected there must survive null injection."""
+    from conftest import T0
+    from serialize import Record
+    spec = specs["fhv"]
+    cfg = {**stream_cfg["data_quality"]}
+    cfg["invalid_injection"] = {**cfg["invalid_injection"], "types": {"unknown_location_id": 1.0}}
+    cfg["null_injection"] = {**cfg["null_injection"], "eligible_fields": {"fhv": ["DOlocationID"]}}
+    inj = Injector(spec, rates(invalid_rate=1.0, null_rate=1.0), cfg, random.Random(2))
+    for seed in range(40):
+        row = {c: None for c in spec["columns"]}
+        row.update(pickup_datetime=T0, dropOff_datetime=T0, PUlocationID=10, DOlocationID=20, dispatching_base_num="B1")
+        rec = inj.mutate(Record(row=row, ts=T0, key="B1"))
+        assert 999 in (rec.row["PUlocationID"], rec.row["DOlocationID"]), f"fault erased (iteration {seed})"
+
+
 def test_fhv_has_no_fare_faults(specs, stream_cfg):
     inj = injector(specs["fhv"], stream_cfg)
     types = inj.applicable_invalid_types()

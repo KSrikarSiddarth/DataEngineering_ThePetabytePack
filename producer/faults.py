@@ -68,22 +68,27 @@ class Injector:
             pickup = row.get(s["pickup_col"])
             if pickup is None:
                 return
+            rec.locked.add(s["dropoff_col"])
             row[s["dropoff_col"]] = pickup - timedelta(minutes=rng.randint(1, 120))
         elif kind == "pickup_out_of_range":
             pickup = row.get(s["pickup_col"])
             if pickup is None:
                 return
+            rec.locked.add(s["pickup_col"])
             row[s["pickup_col"]] = pickup + timedelta(days=rng.choice([-90, 90, 400]))
         elif kind == "negative_amount":
             col = rng.choice(s["amount_cols"])
             value = row.get(col)
+            rec.locked.add(col)
             row[col] = -abs(value) if value else -5.0
         elif kind == "negative_distance":
             col = s["distance_col"]
             value = row.get(col)
+            rec.locked.add(col)
             row[col] = -abs(value) if value else -1.0
         elif kind == "unknown_location_id":
             col = rng.choice(s["location_cols"])
+            rec.locked.add(col)
             row[col] = self.q["invalid_injection"]["unknown_location_id_value"]
         rec.faults.append(f"invalid:{kind}")
 
@@ -92,6 +97,7 @@ class Injector:
             f
             for f in self.q["null_injection"]["eligible_fields"].get(self.spec["name"], [])
             if f in self.columns and f != self.spec["key_col"] and f != self.spec["pickup_col"]
+            and f not in rec.locked
         ]
         if not fields:
             return

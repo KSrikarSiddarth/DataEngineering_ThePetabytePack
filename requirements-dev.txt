@@ -1,0 +1,7 @@
+# Host-side tools: download script, producer dry-run, and the test suite.
+# (The producer and Spark job have their own requirements.txt for their containers.)
+pyarrow==25.0.1
+numpy==2.2.6
+PyYAML==6.0.3
+pytest==8.3.4
+pyspark==3.5.3        # Spark tests need Java 8, 11 or 17 on PATH

@@ -12,6 +12,7 @@ class Record:
     key: "str | None"
     faults: list = field(default_factory=list)
     malformed: bool = False
+    locked: set = field(default_factory=set)   # columns changed by an invalid-data fault; null injection skips them
 
 
 def _json_safe(value):

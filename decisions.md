@@ -26,6 +26,9 @@ Every significant choice in this project, the alternatives considered, and why w
 | D18 | Replay ordering | Index-based sort by pickup time | 🟡 |
 | D19 | FHV message key | `dispatching_base_num` | 🟡 |
 | D20 | Fault injection | Seeded, config-driven, tagged in a Kafka header | 🟡 |
+| D21 | Spark version and packaging | Spark 3.5.3 via pip in a Python image, connector jars baked in | 🟡 |
+| D22 | Validation policy | Reject on rule violations, flag (not reject) missing FHV zones | 🟡 |
+| D23 | Rejected rows | Parquet `invalid` output, not the Kafka invalid topic | 🟡 |
 
 ---
 
@@ -289,6 +292,39 @@ Every significant choice in this project, the alternatives considered, and why w
 **Why:** Repeatable runs make tests and reconciliation possible. Header tags let us tell injected faults from the natural ones in the data (which are substantial), without changing the message body that Spark parses.
 
 **Alternatives:** inject in Spark (hides the fault from the broker and from the raw topic), put the tag in the JSON body (pollutes the schema), or no tagging (can't measure what the validation step should have caught).
+
+---
+
+## D21 — Spark 3.5.3 from pip, connector jars baked into the image 🟡
+
+**Choice:** `python:3.11-slim` + Java + `pyspark==3.5.3`, with the Kafka connector jars (connector 3.5.3, kafka-clients 3.4.1, commons-pool2 2.11.1) downloaded from Maven Central at build time.
+
+**Why:** Spark 3.5 runs on Java 11 and 17 and matches the Java already on the development machine, and the same pinned pyspark runs both in Docker and in local tests. Baking the jars in means the job doesn't download anything at start-up. The jar versions are the ones in the connector's own pom, and the URLs were checked.
+
+**Alternatives**
+- *Spark 4.x:* newer, but needs Java 17+ and a different Scala/Kafka connector line; no benefit for this job.
+- *The `apache/spark` image:* less setup, but I could not verify the exact tags from here, and it can't be reused for local tests.
+- *`--packages` at runtime:* simpler Dockerfile, but needs internet access and time on every cold start.
+
+---
+
+## D22 — Reject on rule violations, flag missing FHV zones 🟡
+
+**Choice:** A row is rejected for a null/out-of-range pickup time, dropoff before pickup, trips over 24h, negative distance or amount, an unknown zone ID, or (Yellow, Green, HVFHV) a null zone. FHV rows whose zone is null are kept and flagged in `dq_flags`.
+
+**Why:** In the real FHV file the pickup zone is null in about 85% of rows, so rejecting them would discard most of the dataset. For the other three, a missing zone is genuinely abnormal. The list is configurable (`location_required_services`).
+
+**Alternatives:** reject every null zone (loses most FHV), or flag everything and reject nothing (turns validation into reporting only).
+
+---
+
+## D23 — Rejected rows go to Parquet, not the Kafka invalid topic 🟡
+
+**Choice:** `output/invalid` (Parquet, with `reject_reason` and the raw payload). `taxi.trips.invalid` is created but unused for now.
+
+**Why:** It's the simplest to inspect and reconcile, and avoids a second Kafka sink and its checkpoint while M3 is being proven.
+
+**Alternatives:** write rejects back to `taxi.trips.invalid` so another consumer could react to them (a reasonable extension), or both.
 
 ---
 

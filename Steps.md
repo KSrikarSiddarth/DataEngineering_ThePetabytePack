@@ -9,7 +9,7 @@ This file tells the build as a story, one chapter per milestone from `PLAN.md`. 
 | 0 | Setting the stage | ✅ |
 | 1 | Infrastructure up (Kafka) | 🚧 written, not yet run (Docker unavailable on this machine) |
 | 2 | The producer | 🚧 built and tested without Kafka; Kafka path not run |
-| 3 | Spark: parse, validate, enrich | ⬜ |
+| 3 | Spark: parse, validate, enrich | 🚧 built and tested locally on file input; Kafka source not run |
 | 4 | Spark: windowed aggregations | ⬜ |
 | 5 | End-to-end with Compose | ⬜ |
 | 6 | Hardening and docs | ⬜ |
@@ -124,7 +124,38 @@ Then check each topic's message count, for example with `kafka-get-offsets.sh` o
 
 ---
 
-## Chapter 3 — Spark: parse, validate, enrich ⬜
+## Chapter 3 — Spark: parse, validate, enrich 🚧
+
+**Status.** The Spark job is written and has run end to end on this machine, but with a file source standing in for Kafka. The Kafka source, the Docker image and the `spark-job` Compose service have not been run, because Docker isn't available here.
+
+**What was built**
+- `spark/transform.py`: pure DataFrame functions, used unchanged by the streaming job and by tests.
+  - **Parse:** each dataset's topic is parsed with an explicit schema, with no inference. Unparseable or empty messages go to the invalid output as `malformed_json`, with the raw payload kept.
+  - **Normalize:** all four datasets map into one unified trip model, using the `normalize` section of `producer/datasets.yaml`. HVFHV `trip_miles`, `base_passenger_fare` and `tips` become distance, fare and tip. Fields a dataset doesn't have stay null, and everything unmapped is kept as JSON in `extras`.
+  - **Enrich:** a broadcast left join with the zone lookup adds pickup and dropoff borough and zone.
+  - **Validate:** a row can be rejected for null or out-of-range pickup time (January 2026 plus one day of tolerance), dropoff before pickup, trips over 24 hours, negative distance or amounts, a location ID missing from the lookup, or (Yellow, Green, HVFHV only) a null pickup or dropoff zone. Reasons are comma-joined in `reject_reason`. FHV rows with a missing zone are kept and flagged in `dq_flags`, since 85% of them have none.
+- `spark/stream_job.py`: reads the four Kafka topics (or NDJSON files with `--source files` for development), writes `trips_clean` and `invalid` as Parquet partitioned by `service`, each with its own checkpoint. `available_now` or `processing_time` triggers, set in `stream-config.yaml` or by `TRIGGER_MODE`.
+- `spark/Dockerfile`: Python 3.11, Java, PySpark 3.5.3, and the Kafka connector jars baked in (URLs checked against Maven Central).
+- `scripts/reconcile.py`: compares each producer's `messages_sent` with the Spark output and lists reject reasons.
+
+**Verified here**
+- 8 Spark tests, within a total of 52 passing tests. They cover 24 rule cases one by one, the unified mapping and enrichment, the output layout, and a run over real data with the `messy` profile. Every injected fault of the five invalid kinds, and every malformed message, was rejected with the right reason, and rows with no injected fault were only rejected for problems already in the TLC data.
+- The streaming job itself (file source, Parquet sinks, checkpoints, `available_now` trigger) ran to completion on 2,031 messages from the four producers. Clean + invalid matched messages sent for every service, and a second run from the same checkpoint added nothing.
+
+**Not verified:** reading from a real Kafka broker, the Docker build (including the connector jar download), and the Compose service. On a machine with Docker:
+```
+docker compose up -d kafka kafka-init
+MAX_RECORDS=1000 REPLAY_SPEEDUP=0 docker compose --profile producers up producer-yellow producer-green producer-fhv producer-hvfhv
+TRIGGER_MODE=available_now docker compose --profile spark up spark-job
+python scripts/reconcile.py
+```
+
+**Things to know**
+- Duplicates injected by the producer are not removed in M3. They count as separate clean rows, so `clean + invalid` equals messages sent, not unique trips.
+- The `taxi.trips.invalid` Kafka topic exists but is not written to yet. Rejected rows go to Parquet only (decision D23).
+- A system-wide `SPARK_HOME` (this machine has Spark 3.3.2) overrides the pip-installed PySpark and causes a version mismatch. The tests and the commands above point it at the right place for their own process only (see `installation.md`).
+
+### Original plan for this chapter
 
 **The story.** Raw messages are just bytes, and real taxi data is messy: negative fares, trips that end before they start, dates from other years. Spark's first job is to turn raw bytes into trustworthy, readable rows and to set aside the ones it can't trust.
 
@@ -204,6 +235,7 @@ Late and out-of-order data to show the watermark at work; aggregates published b
 | Date | Change |
 |---|---|
 | 2026-11-02 | Created `PLAN.md`, `.gitignore`, and this file. No pipeline code written yet. |
+| 2026-11-04 | M3 built: Spark parse/normalize/enrich/validate job, Docker image and Compose service, reconcile script. Streaming run verified on file input only. Fixed a producer bug found by the Spark tests (null injection could erase an injected invalid value). |
 | 2026-11-04 | M2 built: data download script, verified schemas (`specs/raw-schemas.md`), config-driven producer with fault injection, 43 passing tests. Kafka path not run (no Docker). |
 | 2026-11-04 | M1 files written: `stream-config.yaml`, `.env`, `docker-compose.yml`, `kafka-init/`. Not run: no Docker on this machine. |
 | 2026-11-02 | Moved Green, FHV, and HVFHV into the MVP: one topic and producer service per dataset, a unified trip schema in Spark, cross-service aggregations. |

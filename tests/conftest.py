@@ -9,6 +9,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "producer"))
+sys.path.insert(0, str(ROOT / "spark"))
 
 from serialize import Record  # noqa: E402
 

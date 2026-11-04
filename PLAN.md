@@ -141,7 +141,7 @@ File patterns and column names above were **verified against the real 2026-01 fi
 
 ### M3 — Spark: parse + validate + enrich
 - Implement steps 1–4 (multi-topic read, per-dataset parse, normalization, validation, enrichment) writing clean trips to Parquet.
-- **Accept:** with 1000 records produced per dataset (4000 total), `output/trips_clean` row count + invalid count = 4000, and the per-`service` counts reconcile with each producer; enriched rows have non-null `PUZone` for valid location IDs.
+- **Accept:** with 1000 records produced per dataset (4000 total), `output/trips_clean` row count + invalid count = 4000, and the per-`service` counts reconcile with each producer's `messages_sent` (`python scripts/reconcile.py`; injected duplicates count as separate messages and are not removed in M3); enriched rows have non-null `PUZone` for valid location IDs.
 
 ### M4 — Spark: windowed aggregations
 - Implement aggregations with watermark and checkpoints.

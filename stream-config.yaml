@@ -154,6 +154,7 @@ data_quality:
 processing:
   starting_offsets: earliest
   max_offsets_per_trigger: 50000            # bounds micro-batch size; 0 = unlimited
+  trigger_mode: processing_time             # processing_time | available_now (process what is in Kafka, then stop)
   trigger_interval_seconds: 10
   watermark_minutes: 10
   shuffle_partitions: 8
@@ -165,5 +166,7 @@ processing:
     expected_month: "2026-01"
     date_tolerance_days: 1                  # accepted slack around the expected month
     max_trip_hours: 24
+    location_required_services: [yellow, green, hvfhv]   # null pickup/dropoff zone rejects these; FHV rows are only flagged
+  zone_lookup: /data/taxi_zones/taxi_zone_lookup.csv
   output_dir: /output
   checkpoint_dir: /output/checkpoints

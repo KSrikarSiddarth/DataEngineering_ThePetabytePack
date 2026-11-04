@@ -94,6 +94,31 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
       DYNAMIC_CONFIG_ENABLED: "false"
 
+  # M3 — Spark job: reads the four raw topics, writes /output/trips_clean and /output/invalid.
+  #   docker compose --profile spark up -d spark-job         # keeps running (processing_time trigger)
+  #   TRIGGER_MODE=available_now docker compose --profile spark up spark-job   # process what is in Kafka, then exit
+  # Needs ~2 GB for the Spark driver on top of Kafka; see installation.md for WSL memory settings.
+  spark-job:
+    build:
+      context: ./spark
+    container_name: spark-job
+    profiles: ["spark"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+    environment:
+      KAFKA_BOOTSTRAP: kafka:29092
+      CONFIG_PATH: /config/stream-config.yaml
+      DATASETS_PATH: /config/datasets.yaml
+      TRIGGER_MODE: ${TRIGGER_MODE:-}
+      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
+    volumes:
+      - ./data:/data:ro
+      - ./output:/output
+      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ./producer/datasets.yaml:/config/datasets.yaml:ro
+    restart: "no"
+
   producer-yellow:
     <<: *producer
     environment:
