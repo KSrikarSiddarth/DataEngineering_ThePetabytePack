@@ -5,3 +5,4 @@ numpy==2.2.6
 PyYAML==6.0.3
 pytest==8.3.4
 pyspark==3.5.3        # Spark tests need Java 8, 11 or 17 on PATH
+duckdb==1.5.6         # scripts/show_results.py

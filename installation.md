@@ -24,8 +24,9 @@ What to install on a Windows 11 PC, and which step of the project (see `PLAN.md`
 | M2 — Producer | Python (host), Docker Desktop | Python is used to download the Green, FHV, and HVFHV files, inspect the parquet schemas, and run schema tests. The producer itself runs in a container. |
 | M3 — Spark parse/validate/enrich | Docker Desktop, internet | The Spark image and Kafka connector jar are downloaded at build time |
 | M4 — Windowed aggregations | Docker Desktop, Python (optional) | Python with pandas is used to spot-check results |
-| M5 — End-to-end Compose | Docker Desktop, PowerShell | Runs `tests/smoke_test.ps1` |
-| M6 — Hardening and docs | Docker Desktop | Restart/recovery test |
+| M5 — Batch processing of historic data | Docker Desktop (for the container run), or Python + Java 8/11/17 on the host; DuckDB; ~20 GB free disk | Downloads 12 months of the four datasets (~6 GB raw, most of it HVFHV). Needs no Kafka. Python with `duckdb` runs the query benchmark. |
+| M6 — End-to-end Compose | Docker Desktop, PowerShell | Runs `tests/smoke_test.ps1` |
+| M7 — Hardening and docs | Docker Desktop | Restart/recovery test |
 | Reading the output (any time after M3) | Python with pandas/pyarrow, or DuckDB | Optional; for inspecting Parquet files |
 
 ## 3. Installation instructions
@@ -93,7 +94,7 @@ Add `.venv/` to `.gitignore`.
 ## 4. System requirements
 
 - **RAM:** 16 GB total on the PC is comfortable; 8 GB allotted to WSL/Docker.
-- **Disk:** 15–20 GB free for images, input data, and output.
+- **Disk:** 15–20 GB free for images, input data, and output; **25 GB or more** once the batch milestone (M5) adds 12 months of input data (~6 GB) and the historical store.
 - **Ports free:** 9092 (Kafka), 8080 (Kafka UI, optional).
 - **Network:** internet access for image pulls and data downloads. A corporate proxy or firewall may block these.
 - **Location:** keep the project on a local drive (C:), not a network drive.

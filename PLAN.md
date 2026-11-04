@@ -1,10 +1,15 @@
-# PLAN.md — NYC Taxi Streaming Pipeline (Kafka + Spark + Docker Compose)
+# PLAN.md — NYC Taxi Stream + Batch Pipeline (Kafka + Spark + Docker Compose)
 
 Spec-driven development: each milestone has a spec, acceptance criteria, and a verification command. Implement in order; do not start a milestone until the previous one's acceptance criteria pass.
 
 ## 1. Goal
 
-A simple, locally runnable big data pipeline that replays NYC TLC trip records (Yellow, Green, FHV, and HVFHV) as streams through Kafka, processes them with Spark Structured Streaming, and writes aggregated results to a queryable sink. Everything runs with `docker compose up`.
+A simple, locally runnable big data pipeline with **two processing paths over the same NYC TLC trip data** (Yellow, Green, FHV, and HVFHV). Everything runs with Docker Compose.
+
+1. **Stream processing.** Trip records are replayed as streams through Kafka and processed with Spark Structured Streaming (parse, validate, enrich, windowed aggregation). It answers "what is happening now?" in minute-scale windows.
+2. **Batch processing of historic data.** Many months of trip files are processed by a Spark batch job into a partitioned historical store, which is queried with SQL engines (DuckDB, Spark SQL). It answers "what happened over time?" and shows how queries behave on hundreds of millions of rows.
+
+Both paths share the same unified trip model and the same validation and enrichment code, so a trip is judged the same way in either path, and the two can be reconciled against each other.
 
 ## 2. Scope
 
@@ -14,6 +19,7 @@ A simple, locally runnable big data pipeline that replays NYC TLC trip records (
 - Kafka (KRaft mode, single broker) with a raw trips topic.
 - Spark Structured Streaming job: parse, validate, enrich with taxi zones, aggregate in windows.
 - Sink: Parquet files (and console) on a mounted volume; optional second topic for aggregates.
+- **Batch path:** download a range of months (default 12) of all four datasets; a Spark batch job that reuses the stream's normalize, validate and enrich logic and writes a historical store partitioned by `service/year/month`; a query layer (DuckDB and Spark SQL) with a fixed set of KPI queries and a benchmark script that times them.
 - Single-command startup, health checks, README with run instructions.
 
 **Out of scope (initially)**
@@ -21,7 +27,7 @@ A simple, locally runnable big data pipeline that replays NYC TLC trip records (
 
 ## 3. Existing Inputs (in `data/`; fetch the trip files with `python scripts/download_data.py`)
 
-**Data source:** NYC TLC Trip Record Data — https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page (monthly Parquet files for Yellow, Green, FHV, and HVFHV trips, plus the data dictionaries, zone lookup CSV, and taxi zone shapefile). Other months can be downloaded from there to extend the replay.
+**Data source:** NYC TLC Trip Record Data — https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page (monthly Parquet files for Yellow, Green, FHV, and HVFHV trips, plus the data dictionaries, zone lookup CSV, and taxi zone shapefile). The stream path replays one month (2026-01). The batch path needs many months: by default the 12 months 2025-02 to 2026-01 (the streamed month is included so the two paths can be reconciled). Roughly 6 GB of raw files, of which HVFHV is most (about 250M rows). `scripts/download_data.py --months ...` already fetches any range.
 
 | File | Use |
 |---|---|
@@ -47,6 +53,14 @@ A simple, locally runnable big data pipeline that replays NYC TLC trip records (
                               ▼                  ▼
                    /data/out/trips_clean   /data/out/agg_*  (Parquet)
                    (+ taxi.trips.invalid topic for rejects)
+
+            STREAM PATH (above): live, minute-scale windows, one month replayed
+
+12 months of parquet ──> [Spark batch job] ──> /output/historical/service=*/year=*/month=*  (Parquet)
+(data/)                   reuse normalize →            │
+                          validate → enrich            ▼
+                                            [DuckDB / Spark SQL]  KPI queries + benchmark
+            BATCH PATH (above): history, month-scale questions, ad hoc SQL
 ```
 
 ### Services (docker-compose.yml)
@@ -58,6 +72,7 @@ A simple, locally runnable big data pipeline that replays NYC TLC trip records (
 | `spark-master` / `spark-worker` | `apache/spark` (or bitnami equivalent) | Or single `spark` container in local mode for MVP |
 | `spark-job` | build from `./spark` | Submits streaming job with Kafka connector package |
 | `producer-yellow`, `producer-green`, `producer-fhv`, `producer-hvfhv` | one image built from `./producer` (Python), different `DATASET` env | Each replays one dataset to its topic |
+| `spark-batch` | build from `./spark` (same image as `spark-job`) | Compose profile `batch`; runs the historic backfill, then exits. Needs no Kafka |
 | `kafka-ui` (optional) | `provectuslabs/kafka-ui` | Port 8080, for inspection |
 
 Pin all image versions; keep Spark and its Kafka connector (`spark-sql-kafka-0-10`) versions matched, along with Scala version.
@@ -78,7 +93,11 @@ Pin all image versions; keep Spark and its Kafka connector (`spark-sql-kafka-0-1
 │   └── producer.py
 ├── spark/
 │   ├── Dockerfile
-│   └── stream_job.py
+│   ├── transform.py          # shared by both paths: normalize, validate, enrich
+│   ├── stream_job.py
+│   └── batch_job.py          # M5: historic backfill
+├── scripts/                  # download_data.py, reconcile.py, show_results.py,
+│                             #   benchmark_queries.py (M5), queries/*.sql (M5)
 ├── specs/                    # one spec per component (see §6)
 ├── tests/
 │   ├── test_schema.py
@@ -125,8 +144,44 @@ File patterns and column names above were **verified against the real 2026-01 fi
 6. **Sinks**: clean trips + aggregates as Parquet (append mode), with checkpoints in `/data/checkpoints/<query>`; console sink for aggregates in dev mode.
 7. Must restart cleanly from checkpoint without duplicating output.
 
-### 6.4 Config (`.env`)
-`KAFKA_VERSION, SPARK_VERSION, SCALA_VERSION, TOPIC_INVALID, REPLAY_SPEEDUP, MAX_RECORDS, MAX_RECORDS_HVFHV` (raw topic names come from `producer/datasets.yaml`)
+### 6.4 Batch job behavior (historic data, M5)
+1. Read the monthly Parquet files for each dataset from `data/` (all months in the configured range) with Spark's batch reader, using the explicit per-dataset schema. No Kafka and no JSON round-trip: `spark/transform.py` gets a typed-Parquet entry point that skips `from_json`, and the normalize, enrich and validate steps are the same functions the stream uses.
+2. Same validation policy as the stream (reject vs flag). Rejected rows go to `output/historical_invalid`, partitioned the same way.
+3. Write the clean trips to `output/historical/` partitioned by `service/year/month` (year and month of the pickup time), as Parquet. The write is idempotent: rerunning a month overwrites only that month's partition (dynamic partition overwrite).
+4. Fault injection does not apply to the batch path: it reads the original files. Real data problems (nulls, rows outside the month, negative values) are still caught by validation.
+5. Run time and row counts per service and month are logged and written to `output/batch-stats/`.
+
+**Query layer.** The historical store is queried in place (no load step):
+- DuckDB (`scripts/show_results.py --store historical`, or `duckdb` directly) and Spark SQL (`spark-sql` via the batch image) over the same Parquet files.
+- `scripts/queries/*.sql` holds the KPI queries (§6.6). `scripts/benchmark_queries.py` runs them on both engines, prints timings, and compares a query that can use partition pruning and column selection against the same query forced to scan everything.
+
+### 6.5 Config (`.env`)
+`KAFKA_VERSION, SPARK_VERSION, SCALA_VERSION, TOPIC_INVALID, REPLAY_SPEEDUP, MAX_RECORDS, MAX_RECORDS_HVFHV` (raw topic names come from `producer/datasets.yaml`). Batch settings (`batch:` section: months range, datasets, output paths, shuffle partitions) live in `stream-config.yaml`.
+
+### 6.6 KPIs
+
+The two paths answer different questions; they are the acceptance criteria for M4 and M5.
+
+**Stream (M4, windowed, minutes)**
+- Demand: trips started per 5-minute window by pickup zone/borough and by service.
+- Trip rate per minute by service.
+- Revenue rate and average fare per window (services with fare data only; FHV has none).
+- Average trip distance and duration per window.
+- Tip rate per window (services that have a tip field).
+- Live data quality: rejected-row, late-row, duplicate and malformed-message rates per window.
+
+**Batch (M5, history, months)**
+- Trips and revenue per service per day/week/month; market share of Yellow vs HVFHV.
+- Busiest hour of day and day of week by borough.
+- Top 10 pickup→dropoff zone pairs and the borough-to-borough flow matrix.
+- Fare per mile, tip percentage by zone, airport trips (JFK, LaGuardia, Newark) versus the rest.
+- Trip distance and duration percentiles (p50, p95) and the share of outliers.
+- Data quality over time: reject rate by reason, per service and month.
+- Query performance: timing of each KPI query on DuckDB and Spark SQL; partition pruning and column selection compared with a full scan.
+
+**Both**
+- Totals reconcile: for the streamed month, batch totals equal stream totals, except for trips dropped as too late by the watermark and rows removed by fault injection (checked in M5).
+- Where a dataset lacks a field (FHV fares, distance, and about 85% of pickup zones), the KPI covers only the services that have it.
 
 ## 7. Milestones
 
@@ -147,11 +202,23 @@ File patterns and column names above were **verified against the real 2026-01 fi
 - Implement aggregations with watermark and checkpoints.
 - **Accept:** aggregate totals (sum of trip counts across windows) equal clean-trip count for fully-closed windows; spot-check one zone-hour against a pandas computation on the same parquet.
 
-### M5 — End-to-end with Compose
-- Add `spark-job` and `producer` services with `depends_on` (healthy/completed conditions).
-- **Accept:** from a clean checkout, `docker compose up --build` processes the full file without manual steps; `output/` contains clean, invalid, and aggregate datasets; `docker compose down -v` leaves nothing behind.
+- The stream KPIs in §6.6 are the target list for these aggregations; the three aggregations above are the minimum, and the rest (trip rate, duration, data-quality rates) are added as further windowed queries.
 
-### M6 — Hardening & docs
+### M5 — Batch processing of historic data
+- Download the configured range of months (default 2025-02 to 2026-01) for all four datasets.
+- Add the typed-Parquet entry point to `spark/transform.py` and implement `spark/batch_job.py` (§6.4), writing `output/historical/` partitioned by `service/year/month`, plus `output/historical_invalid/`. Add the `spark-batch` Compose service (profile `batch`).
+- Write the batch KPI queries in `scripts/queries/` and `scripts/benchmark_queries.py`, which times them on DuckDB and Spark SQL.
+- **Accept:**
+  1. Per service and month, `historical` rows + `historical_invalid` rows = rows in the source file (`scripts/reconcile.py --batch`).
+  2. Rerunning one month leaves the other months' partitions and the totals unchanged (idempotent).
+  3. For the streamed month (2026-01), batch counts per service equal the stream's clean + invalid counts when run with the `clean` quality profile and no `MAX_RECORDS` cap (and with HVFHV capped identically in both, for a fast check).
+  4. Every batch KPI in §6.6 has a query that returns a result on all months; `benchmark_queries.py` prints a timing table, and the partition-pruned query reads fewer files than the full scan.
+
+### M6 — End-to-end with Compose
+- Add `spark-job` and `producer` services with `depends_on` (healthy/completed conditions), and a documented way to run the batch backfill alongside (`docker compose --profile batch up spark-batch`).
+- **Accept:** from a clean checkout, `docker compose up --build` processes the full file without manual steps; `output/` contains clean, invalid, and aggregate datasets; `docker compose down -v` leaves nothing behind. The batch profile runs on its own and does not need Kafka.
+
+### M7 — Hardening & docs
 - Restart test: stop `spark-job` mid-run, restart, verify no duplicates/loss (compare counts).
 - README: prerequisites (Docker Desktop on Windows, ≥6 GB RAM allotted), run, inspect (Kafka UI, reading Parquet with pandas/DuckDB), troubleshooting, config table.
 - **Accept:** a new user can follow README and reproduce results.
@@ -162,6 +229,8 @@ File patterns and column names above were **verified against the real 2026-01 fi
 - Geo visualization with `taxi_zones` shapefile.
 - Replay the full HVFHV month (no cap) on a bigger machine or cluster.
 - Switch sink to Delta Lake/Iceberg.
+- Combine the paths: compare live window KPIs against the historical baseline (for example, "demand in this zone is 40% above the usual Tuesday 8 am level").
+- Add Trino or a Postgres/ClickHouse serving layer over the historical store, to compare with DuckDB and Spark SQL.
 
 ## 8. Testing Strategy
 
@@ -170,7 +239,9 @@ File patterns and column names above were **verified against the real 2026-01 fi
 | Unit | Row→JSON serialization, validation rules | `pytest` (producer functions, Spark transforms on small DataFrames in local mode) |
 | Integration | Producer → Kafka → Spark on 1k records | `tests/smoke_test.ps1` against compose stack |
 | Data quality | Counts reconcile (raw = clean + invalid) | Assertion script reading output Parquet |
-| Recovery | Checkpoint restart | Manual script in M6 |
+| Batch | Per-service and per-month row reconciliation; idempotent rerun; stream vs batch totals for the streamed month | `scripts/reconcile.py --batch`, pytest on a small multi-month fixture |
+| Query | KPI queries return expected values on a small hand-checked fixture; DuckDB and Spark SQL agree | `pytest`, then `scripts/benchmark_queries.py` on the full store |
+| Recovery | Checkpoint restart | Manual script in M7 |
 
 ## 9. Risks & Decisions
 
@@ -185,6 +256,11 @@ File patterns and column names above were **verified against the real 2026-01 fi
 | Four schemas drift or differ from recalled column names | Verify against the real files and PDFs in M2; one schema test per dataset |
 | Streams arrive misaligned in event time, stalling the watermark | Shared simulated clock across producers; watermark advances on the slowest-moving input, so document and test it in M4 |
 | Windowed output delayed by watermark in append mode | Expected; document, and flush with a final trailing event or use `update` mode for dev |
+| 12 months of HVFHV (~250M rows, ~6 GB raw) is slow or runs out of memory in a local-mode Spark container | Process one month at a time (the job loops over months), keep shuffle partitions low, and allow a smaller default range (for example 3 months) in `stream-config.yaml` |
+| Disk use of raw files plus processed output | Check free space (20 GB or more) before the download; `data/` and `output/` are gitignored |
+| Batch and stream drift apart (two code paths) | Both call the same functions in `spark/transform.py`; the stream-vs-batch reconciliation in M5 catches drift |
+| Monthly files contain rows from other months | Partition by the pickup month in the data, not the file name; rows far outside the range are rejected by validation (as in the stream) |
+| Schema changes between months (columns added or renamed) | The batch job checks each file's columns against `datasets.yaml` and fails loudly, per file |
 
 **Decisions to confirm before M1**
 1. Spark deployment: single local-mode container (simpler, recommended for MVP) vs. master/worker cluster.
@@ -192,9 +268,12 @@ File patterns and column names above were **verified against the real 2026-01 fi
 3. Sink: Parquet only (recommended) vs. also Postgres/ClickHouse for SQL querying.
 4. HVFHV volume: capped sample by default (recommended, e.g. 500k rows) vs. the full month.
 5. Data acquisition: one-time download script on the host (recommended) vs. a Compose `data-init` service.
+6. Batch history length: 12 months (recommended) vs. fewer, if disk or time is tight (D25).
+7. Query engines for the historic store: DuckDB + Spark SQL (recommended) vs. adding Trino or a database (D24, D25).
 
 ## 10. Definition of Done
-- `docker compose up --build` runs the whole pipeline unattended.
+- `docker compose up --build` runs the whole stream pipeline unattended, and `docker compose --profile batch up spark-batch` builds the historical store.
+- The stream KPIs and the batch KPIs in §6.6 are all answered, and the stream and batch totals reconcile for the streamed month.
 - All milestone acceptance criteria pass; reconciliation test shows no lost or duplicated records.
 - README documents setup, configuration, and verification.
 - Specs in `specs/` match the implemented behavior.

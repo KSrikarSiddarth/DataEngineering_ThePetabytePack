@@ -1,6 +1,6 @@
-# Steps.md — The Story of the NYC Taxi Streaming Pipeline
+# Steps.md — The Story of the NYC Taxi Stream + Batch Pipeline
 
-This file tells the build as a story, one chapter per milestone from `PLAN.md`. Each chapter has the **why**, the **how** (implementation details), and **how we know it worked**. Status markers are updated as work progresses.
+This project has two goals: **stream processing** of taxi trips through Kafka and Spark Structured Streaming (Chapters 1 to 4), and **batch processing of historic data** with a queryable historical store (Chapter 5). This file tells the build as a story, one chapter per milestone from `PLAN.md`. Each chapter has the **why**, the **how** (implementation details), and **how we know it worked**. Status markers are updated as work progresses.
 
 **Legend:** ✅ done · 🚧 in progress · ⬜ not started
 
@@ -10,9 +10,10 @@ This file tells the build as a story, one chapter per milestone from `PLAN.md`. 
 | 1 | Infrastructure up (Kafka) | 🚧 written, not yet run (Docker unavailable on this machine) |
 | 2 | The producer | 🚧 built and tested without Kafka; Kafka path not run |
 | 3 | Spark: parse, validate, enrich | 🚧 built and tested locally on file input; Kafka source not run |
-| 4 | Spark: windowed aggregations | ⬜ |
-| 5 | End-to-end with Compose | ⬜ |
-| 6 | Hardening and docs | ⬜ |
+| 4 | Spark: windowed aggregations (stream KPIs) | ⬜ |
+| 5 | Batch processing of historic data (batch KPIs, query benchmark) | ⬜ |
+| 6 | End-to-end with Compose | ⬜ |
+| 7 | Hardening and docs | ⬜ |
 
 ---
 
@@ -192,9 +193,34 @@ python scripts/reconcile.py
 
 **Expect:** in append mode, a window's output appears only after the watermark passes it. The last windows may not show until more data (or a trailing event) arrives. That is correct behavior and should be documented.
 
+**KPIs this chapter answers** (full list in `PLAN.md` §6.6): demand per zone and service per window, trip rate, revenue rate and average fare, trip distance and duration, tip rate, and live data-quality rates (rejected, late, duplicate and malformed).
+
 ---
 
-## Chapter 5 — End-to-end with Compose ⬜
+## Chapter 5 — Batch processing of historic data ⬜
+
+**The story.** The stream tells us what is happening right now, in windows of minutes. But a month of replayed data cannot say whether Friday nights are always this busy, or how yellow cabs compare with app-based services over a year. For that we need history, and with history comes the other big data problem: not speed, but size. A year of HVFHV alone is about 250 million rows. This chapter adds the second path through the project: a batch job that processes many months at once into a store we can query with SQL, and a benchmark that shows how queries behave at that size.
+
+**Implementation plan**
+1. Download 12 months (2025-02 to 2026-01) of all four datasets with the existing `scripts/download_data.py --months ...`. This is about 6 GB, so check free disk first. The months list goes in a new `batch:` section of `stream-config.yaml`.
+2. Add a typed-Parquet entry point to `spark/transform.py` that skips `from_json`. Normalize, validate and enrich stay the same functions the stream uses, so a trip is judged identically in both paths.
+3. Write `spark/batch_job.py`: process one month at a time (to keep memory in check), write clean trips to `output/historical/service=*/year=*/month=*` and rejects to `output/historical_invalid/`, with dynamic partition overwrite so rerunning a month is safe.
+4. Add the `spark-batch` Compose service (profile `batch`). It needs no Kafka.
+5. Write the batch KPI queries as SQL files in `scripts/queries/`: trends per service, peak hours, top routes and the borough flow matrix, fare per mile, tip percentage, airport trips, percentiles, and reject rate over time.
+6. Write `scripts/benchmark_queries.py`: run each query on DuckDB and Spark SQL, and compare a partition-pruned query against a full scan. Print a timing table.
+7. Extend `reconcile.py` with `--batch`: per service and month, source rows against historical plus invalid rows.
+
+**How we know it worked**
+- Per service and month, historical + invalid rows equal the source file's row count.
+- Rerunning one month changes nothing else.
+- For the streamed month, batch counts match the stream's counts (clean profile, same HVFHV cap).
+- Every batch KPI returns a result, and the benchmark shows the pruned query reading fewer files than the full scan.
+
+**Watch for:** HVFHV memory and time on a laptop (loop over months, keep shuffle partitions low, or start with 3 months), monthly files that contain rows from other months, and column changes between months.
+
+---
+
+## Chapter 6 — End-to-end with Compose ⬜
 
 **The story.** So far each piece was started by hand. Now we make the whole thing run with a single command, the way someone cloning the project would expect.
 
@@ -204,13 +230,15 @@ python scripts/reconcile.py
 3. Mount `./data` read-only and `./output` for results. If Windows file permissions cause trouble, switch to a named volume.
 4. Add `tests/smoke_test.ps1`: bring the stack up with a small `MAX_RECORDS`, wait for completion, then check that the outputs exist and the counts reconcile.
 
+5. Document how to run the batch backfill next to the stream (`docker compose --profile batch up spark-batch`); it runs on its own and does not wait for Kafka.
+
 **How we know it worked**
 - From a clean checkout, `docker compose up --build` processes the whole file with no manual steps.
 - `docker compose down -v` leaves nothing behind.
 
 ---
 
-## Chapter 6 — Hardening and docs ⬜
+## Chapter 7 — Hardening and docs ⬜
 
 **The story.** A pipeline that works once is a demo. One that survives a restart and can be handed to someone else is a project.
 
@@ -226,7 +254,7 @@ python scripts/reconcile.py
 
 ## Epilogue — Stretch goals
 
-Late and out-of-order data to show the watermark at work; aggregates published back to Kafka with a small dashboard; the full uncapped HVFHV month; maps built from the taxi zone shapefile; and a Delta Lake or Iceberg sink.
+Late and out-of-order data to show the watermark at work (already partly built into the producer's fault injection); aggregates published back to Kafka with a small dashboard; the full uncapped HVFHV month; maps built from the taxi zone shapefile; a Delta Lake or Iceberg sink; live window KPIs compared with the historical baseline; and Trino or a database as an extra query engine over the historical store.
 
 ---
 
@@ -234,6 +262,7 @@ Late and out-of-order data to show the watermark at work; aggregates published b
 
 | Date | Change |
 |---|---|
+| 2026-11-04 | Goal widened to stream + batch processing of historic data. Added the batch milestone as M5 (Chapter 5); end-to-end Compose is now M6 and hardening is M7. Added KPI lists, D24 and D25. Planning only, no code. |
 | 2026-11-02 | Created `PLAN.md`, `.gitignore`, and this file. No pipeline code written yet. |
 | 2026-11-04 | M3 built: Spark parse/normalize/enrich/validate job, Docker image and Compose service, reconcile script. Streaming run verified on file input only. Fixed a producer bug found by the Spark tests (null injection could erase an injected invalid value). |
 | 2026-11-04 | M2 built: data download script, verified schemas (`specs/raw-schemas.md`), config-driven producer with fault injection, 43 passing tests. Kafka path not run (no Docker). |

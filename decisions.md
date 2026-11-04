@@ -6,7 +6,7 @@ Every significant choice in this project, the alternatives considered, and why w
 
 | # | Decision | Choice | Status |
 |---|---|---|---|
-| D1 | Processing model | Streaming (replayed history) | ✅ |
+| D1 | Processing model | Streaming (replayed history); batch added for historic data in D24 | ✅ |
 | D2 | Message broker | Apache Kafka | ✅ |
 | D3 | Stream processor | Spark Structured Streaming | ✅ |
 | D4 | Orchestration | Docker Compose | ✅ |
@@ -29,6 +29,8 @@ Every significant choice in this project, the alternatives considered, and why w
 | D21 | Spark version and packaging | Spark 3.5.3 via pip in a Python image, connector jars baked in | 🟡 |
 | D22 | Validation policy | Reject on rule violations, flag (not reject) missing FHV zones | 🟡 |
 | D23 | Rejected rows | Parquet `invalid` output, not the Kafka invalid topic | 🟡 |
+| D24 | Batch processing of historic data | A second path next to the stream, sharing one transform module | ✅ (goal) · 🟡 (design) |
+| D25 | Historical store and query engines | Partitioned Parquet, 12 months, DuckDB + Spark SQL | 🟡 |
 
 ---
 
@@ -43,6 +45,8 @@ Every significant choice in this project, the alternatives considered, and why w
 - *A live feed:* TLC publishes monthly files, not a real-time feed, so there is nothing live to connect to.
 
 **Trade-off:** The stream is simulated, so delivery timing is artificial. Event-time logic is real, but latency numbers are not.
+
+**Update (2026-11-04):** the project goal is now stream **and** batch processing of historic data (D24). This decision still holds for the live-KPI path: streaming remains the way the "what is happening now" questions are answered. The "plain batch ETL" alternative rejected above is no longer rejected outright; it is now the second path, for a different question.
 
 ---
 
@@ -238,7 +242,7 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ## D16 — Spec-driven, milestone by milestone ✅
 
-**Choice:** `PLAN.md` holds specs and acceptance criteria; `Steps.md` tracks progress; implement M1 to M6 in order.
+**Choice:** `PLAN.md` holds specs and acceptance criteria; `Steps.md` tracks progress; implement M1 to M7 in order.
 
 **Why:** Each piece is verified before the next depends on it (Kafka, then producer, then Spark), which keeps failures easy to locate. Written specs also make the behavior testable.
 
@@ -328,17 +332,57 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ---
 
+---
+
+## D24 — Batch processing of historic data as a second path ✅ (goal) 🟡 (design)
+
+**Choice:** Add a Spark batch job that processes many months of Parquet into a historical store, next to the streaming path. Both paths call the same normalize, validate and enrich functions in `spark/transform.py`. The batch path is its own milestone (M5) and its own Compose profile (`batch`), and needs no Kafka.
+
+**Why:** The two paths answer different questions. The stream answers "what is happening now?" in minute-scale windows. The batch path answers "what happened over time?" (trends, peak hours, top routes, fare economics) and shows how SQL queries behave on hundreds of millions of rows. The project owner asked for the goal to be stream + batch; the historic-query capability is a deliberate second goal, not a by-product.
+
+**Alternatives**
+- *Stream-only, replaying more months:* makes the stream run for hours and still cannot answer a year-long query quickly.
+- *Batch by replaying history through Kafka into the same streaming job:* reuses the stream, but forces 250M rows through a broker for no benefit, and hides the batch concepts (partitioning, pruning, scan speed) the goal is meant to show.
+- *Separate batch code that re-implements validation:* faster to write, but the two paths would drift. Sharing `transform.py` and reconciling the streamed month against batch (M5) keeps them honest. Cost: `transform.py` needs a typed-Parquet entry point that skips `from_json`.
+- *Lambda-style merged serving layer now:* combining live and historic results in one view is attractive but is left as a stretch goal.
+
+**Trade-off:** more disk, more code, and a longer test and download cycle. Fault injection does not apply to batch (it reads the original files).
+
+---
+
+## D25 — Historical store and query engines 🟡
+
+**Choice:** Parquet partitioned by `service/year/month` under `output/historical/`; 12 months by default (2025-02 to 2026-01, which includes the streamed month); queried in place with DuckDB and Spark SQL; timings from a benchmark script.
+
+**Why**
+- *Partitioned Parquet:* the same format as the stream sink (D12), so no new storage service, and partition pruning and column selection are exactly the effects the benchmark should show.
+- *12 months:* enough for seasonality and about 250M HVFHV rows, which is large enough that scan cost is visible. It also includes the streamed month, so batch and stream can be reconciled. It is a setting, so a laptop can start with 3 months.
+- *DuckDB:* already adopted (D13); handles hundreds of millions of rows on one machine without a server.
+- *Spark SQL:* same data, same container image as the batch job, so it shows the distributed-engine side for comparison.
+
+**Alternatives**
+- *Trino, Postgres, ClickHouse:* real serving layers and a good stretch goal, but each adds a service, loading, and setup that is not needed to demonstrate the goal.
+- *Delta Lake or Iceberg tables:* better updates and time travel, but more dependencies; also a stretch goal (see D12).
+- *A single huge Parquet file:* simple, but gives no pruning and makes idempotent per-month reruns impossible.
+- *Partition by day:* finer pruning, but roughly 365 partitions per service and many small files; month is the better default at this size.
+
+**Open:** the number of months depends on disk (about 6 GB raw plus output) and on how long HVFHV takes in local mode; confirm after measuring.
+
+---
+
 ## Open Questions
 
 | # | Question | Needed by |
 |---|---|---|
 | Q1 | Confirm D6 to D12 and D14 to D15, or choose alternatives | Before M1 |
 | Q2 | HVFHV cap size: measure throughput first, then fix the number | M2 |
-| Q3 | How many months to replay (just 2026-01, or more) | M2 |
-| Q4 | Whether a dashboard or SQL serving layer is wanted (D12 extension) | After M5 |
+| Q3 | ~~How many months to replay~~ Resolved: stream replays 2026-01; batch uses 12 months (D25, to confirm) | M2 / M5 |
+| Q4 | Whether a dashboard or SQL serving layer is wanted (D12 extension) | After M6 |
+| Q5 | Confirm D24 and D25 design: 12 months or fewer, DuckDB + Spark SQL only | Before M5 |
 
 ## Change Log
 
 | Date | Change |
 |---|---|
+| 2026-11-04 | Added D24 (batch path alongside the stream) and D25 (historical store and query engines). Updated D1 and D16. Resolved Q3, added Q5. |
 | 2026-11-02 | Initial log created from decisions in `PLAN.md`, `Steps.md`, and `installation.md`. |
