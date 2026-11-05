@@ -30,7 +30,10 @@ Every significant choice in this project, the alternatives considered, and why w
 | D22 | Validation policy | Reject on rule violations, flag (not reject) missing FHV zones | 🟡 |
 | D23 | Rejected rows | Parquet `invalid` output, not the Kafka invalid topic | 🟡 |
 | D24 | Batch processing of historic data | A second path next to the stream, sharing one transform module | ✅ (goal) · 🟡 (design) |
-| D25 | Historical store and query engines | Partitioned Parquet, 12 months, DuckDB + Spark SQL | 🟡 |
+| D25 | Historical store and query engines | Partitioned Parquet, 24 months, DuckDB + Spark SQL | 🟡 |
+| D26 | Data layers | Bronze (not copied), Silver, Gold; stream builds daily marts, batch builds the rest | 🟡 |
+| D28 | Stream and batch results | Separate stores; stream never merged into the historic store; combined only at query time with a cutover date | ✅ |
+| D27 | Validation policy v2 | Flag KPI-relevant violations in Silver, reject only unusable rows (would replace D22) | 🟡 |
 
 ---
 
@@ -242,7 +245,7 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ## D16 — Spec-driven, milestone by milestone ✅
 
-**Choice:** `PLAN.md` holds specs and acceptance criteria; `Steps.md` tracks progress; implement M1 to M7 in order.
+**Choice:** `PLAN.md` holds specs and acceptance criteria; `Steps.md` tracks progress; implement M1 to M8 in order.
 
 **Why:** Each piece is verified before the next depends on it (Kafka, then producer, then Spark), which keeps failures easy to locate. Written specs also make the behavior testable.
 
@@ -320,6 +323,8 @@ Every significant choice in this project, the alternatives considered, and why w
 
 **Alternatives:** reject every null zone (loses most FHV), or flag everything and reject nothing (turns validation into reporting only).
 
+**Update (2026-11-05):** D27 proposes replacing the reject policy with flags in Silver, because the KPI catalog's data-quality KPIs are computed from flags. The FHV zone rule above stays as it is (flag, not reject).
+
 ---
 
 ## D23 — Rejected rows go to Parquet, not the Kafka invalid topic 🟡
@@ -332,17 +337,15 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ---
 
----
-
 ## D24 — Batch processing of historic data as a second path ✅ (goal) 🟡 (design)
 
 **Choice:** Add a Spark batch job that processes many months of Parquet into a historical store, next to the streaming path. Both paths call the same normalize, validate and enrich functions in `spark/transform.py`. The batch path is its own milestone (M5) and its own Compose profile (`batch`), and needs no Kafka.
 
-**Why:** The two paths answer different questions. The stream answers "what is happening now?" in minute-scale windows. The batch path answers "what happened over time?" (trends, peak hours, top routes, fare economics) and shows how SQL queries behave on hundreds of millions of rows. The project owner asked for the goal to be stream + batch; the historic-query capability is a deliberate second goal, not a by-product.
+**Why:** The two paths answer different questions. The stream answers "what is happening now?" (the daily KPI marts, built incrementally). The batch path answers "what happened over time?" (trends, peak hours, top routes, fare economics) and shows how SQL queries behave on hundreds of millions of rows. The project owner asked for the goal to be stream + batch; the historic-query capability is a deliberate second goal, not a by-product.
 
 **Alternatives**
 - *Stream-only, replaying more months:* makes the stream run for hours and still cannot answer a year-long query quickly.
-- *Batch by replaying history through Kafka into the same streaming job:* reuses the stream, but forces 250M rows through a broker for no benefit, and hides the batch concepts (partitioning, pruning, scan speed) the goal is meant to show.
+- *Batch by replaying history through Kafka into the same streaming job:* reuses the stream, but forces hundreds of millions of rows through a broker for no benefit, and hides the batch concepts (partitioning, pruning, scan speed) the goal is meant to show.
 - *Separate batch code that re-implements validation:* faster to write, but the two paths would drift. Sharing `transform.py` and reconciling the streamed month against batch (M5) keeps them honest. Cost: `transform.py` needs a typed-Parquet entry point that skips `from_json`.
 - *Lambda-style merged serving layer now:* combining live and historic results in one view is attractive but is left as a stretch goal.
 
@@ -352,11 +355,11 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ## D25 — Historical store and query engines 🟡
 
-**Choice:** Parquet partitioned by `service/year/month` under `output/historical/`; 12 months by default (2025-02 to 2026-01, which includes the streamed month); queried in place with DuckDB and Spark SQL; timings from a benchmark script.
+**Choice:** Parquet partitioned by `service_type/year/month` under `output/batch/silver/trips` (and Gold marts under `output/batch/gold/`); **24 months by default** (2024-01 to 2025-12, ending before the streamed month, D28); queried in place with DuckDB and Spark SQL; timings from a benchmark script.
 
 **Why**
 - *Partitioned Parquet:* the same format as the stream sink (D12), so no new storage service, and partition pruning and column selection are exactly the effects the benchmark should show.
-- *12 months:* enough for seasonality and about 250M HVFHV rows, which is large enough that scan cost is visible. It also includes the streamed month, so batch and stream can be reconciled. It is a setting, so a laptop can start with 3 months.
+- *24 months (changed from 12 on 2026-11-05):* the KPI catalog (`specs/3_KPI.html`) asks for year-over-year growth, a rolling 12-month average, a seasonality index, service-type share shift "over years", and fee impact around policy dates. Year-over-year growth needs at least 13 months (24 for a full series), seasonality needs two cycles, and the CBD congestion fee (January 2025) needs months before it, which 2025-02 to 2026-01 does not have. 24 months (2024-01 to 2025-12) covers all of these except the 2022 Airport fee comparison, with the whole of 2024 before the January 2025 fee. The streamed month is outside the range (D28), and the range is a setting, so a laptop can start with 3 months.
 - *DuckDB:* already adopted (D13); handles hundreds of millions of rows on one machine without a server.
 - *Spark SQL:* same data, same container image as the batch job, so it shows the distributed-engine side for comparison.
 
@@ -366,7 +369,63 @@ Every significant choice in this project, the alternatives considered, and why w
 - *A single huge Parquet file:* simple, but gives no pruning and makes idempotent per-month reruns impossible.
 - *Partition by day:* finer pruning, but roughly 365 partitions per service and many small files; month is the better default at this size.
 
-**Open:** the number of months depends on disk (about 6 GB raw plus output) and on how long HVFHV takes in local mode; confirm after measuring.
+- *12 months:* the original proposal; about half the disk, but several catalog KPIs could not be computed.
+- *49 months (2022-01 to 2026-01):* also covers the 2022 Airport fee comparison, but roughly doubles disk again (about 80 GB) and the batch run time.
+
+**Open:** disk (about 40–50 GB for 24 months, see `storage_requirements.md`) and how long HVFHV takes in local mode; confirm after measuring.
+
+---
+
+## D26 — Medallion layers (Bronze, Silver, Gold) and which path builds what 🟡
+
+**Choice:** Organize both paths as Bronze, Silver and Gold, following `specs/2_nyc_taxi_medallion_architecture.html`.
+- **Bronze** is the landing layer and is not copied: the Kafka raw topics (stream) and the TLC files in `data/` (batch).
+- **Silver** (`silver.trips`, dimensions, `batch_run_log`, `ml_features`) is written by both paths, to separate folders: `output/stream/silver/` and `output/batch/silver/`.
+- **Gold** marts follow `specs/3_KPI.html`. The stream path builds the daily marts incrementally. The batch path rebuilds the daily marts and owns the monthly marts, pipeline health and ML outputs.
+
+**Why:** The specs define the target tables, so using them directly avoids inventing a second data model. Separate folders per path keep the two independent (D28); they are combined only at query time. Not copying Bronze saves 7–14 GB. The catalog does not say which path builds which mart; building the daily marts in the stream keeps the live path using the same KPI definitions as the batch path.
+
+**Alternatives**
+- *Copy Bronze into Parquet tables:* matches the spec literally and gives replayable raw data, but doubles the raw storage. The Kafka log and the downloaded files already serve as replayable raw data.
+- *One shared Silver for both paths:* less disk, but the paths would write over the same month and nothing could be reconciled.
+- *Batch builds all Gold, stream builds only Silver:* simpler, but the streaming half of the project would then answer none of the KPIs.
+- *Add minute-scale stream KPIs:* more "real-time", but they are not in the catalog; left as a stretch goal.
+
+**Consequence:** the M3 output (`output/trips_clean`, `output/invalid`, unified column names) must be reworked to match Silver, as the first part of M4. The gaps are listed in `PLAN.md` §6.7.
+
+---
+
+## D27 — Flag, don't reject, rule violations that the KPIs measure 🟡
+
+**Choice:** Keep trips with dropoff before pickup, zero or negative distance, negative fare, unmatched zones, and pickup times outside the file's month in `silver.trips`, with a `dq_*` flag. Only rows that cannot be used at all (malformed JSON, null pickup time) go to `silver_invalid`. Gold marts filter on the flags (for example, the efficiency marts exclude rows with `dq_dropoff_before_pickup`). **This replaces D22 if accepted.**
+
+**Why:** The catalog's data-quality KPIs ("dropoff-before-pickup share", "zero or negative distance and fare share", "unmatched zone share", null-rate drift) are computed from flags on Silver rows. Under D22 those rows are rejected and never reach Silver, so the KPIs would have to be rebuilt from the rejected data. Silver's description also says "validated", with `dq_*` columns in its schema.
+
+**Alternatives**
+- *Keep D22 (reject):* Silver stays clean, and the quality KPIs read from `silver_invalid`. It works, but splits one KPI across two tables, and the `dq_*` columns in the Silver spec would be unused.
+- *Both:* flag in Silver and also copy to `silver_invalid`. Double counting makes reconciliation harder.
+
+**Trade-off:** every Gold query must remember the filter; a shared view or the mart definitions in `spark/gold.py` apply it in one place. The M3 reconcile test (every injected fault ends in a reject) changes to "every injected fault is flagged or rejected as expected".
+
+---
+
+## D28 — Combine stream and batch at query time only ✅
+
+**Choice:** The stream path writes only to `output/stream/` and the batch path only to `output/batch/`. The stream's output is **never appended to or merged into the historic store**. The two are combined only when queried, through DuckDB/Spark SQL views with a **cutover date** (`combined.cutover_date`, default 2026-01-01): batch rows before the cutover, stream rows from it on. Each date comes from exactly one side. The batch range therefore ends before the streamed month (2024-01 to 2025-12). The KPIs are unchanged, including the live-against-baseline comparison, which is now a query over the combined views.
+
+**Why:** Decided by the project owner (option A). No data is copied or promoted, the historic store stays a clean, repeatable batch result, and each path can be run, reset and verified on its own. The cutover rule is a single config value.
+
+**Alternatives**
+- *Append the stream into the historic store, then overwrite it when the batch result is final:* the usual "streaming now, correct later" pattern, but it needs a promotion step and a winner rule, and it mixes the two paths' data.
+- *One shared store both paths write to:* simplest to query, but risks duplicates and breaks the stream-vs-batch comparison.
+- *No combination at all:* simplest, but the live-against-baseline KPI could not be answered.
+
+**Consequences**
+- The batch range changes from 2024-02..2026-01 to **2024-01..2025-12** (D25). The streamed month is no longer in the batch store.
+- The stream/batch comparison for 2026-01 (M5) uses a throwaway batch run into `output/check/`, deleted afterwards.
+- New in M5: `scripts/combined_views.py` and `scripts/queries/live_vs_baseline.sql`. Only the daily marts exist on both sides, so only those are combined (PLAN.md §6.8).
+- Each date must be on exactly one side. A gap or overlap between the batch range and the cutover is a bug, and a test covers it.
+- The cutover is a date, not a live pointer: if the stream replays a different month, change `cutover_date` and the batch range together.
 
 ---
 
@@ -376,13 +435,18 @@ Every significant choice in this project, the alternatives considered, and why w
 |---|---|---|
 | Q1 | Confirm D6 to D12 and D14 to D15, or choose alternatives | Before M1 |
 | Q2 | HVFHV cap size: measure throughput first, then fix the number | M2 |
-| Q3 | ~~How many months to replay~~ Resolved: stream replays 2026-01; batch uses 12 months (D25, to confirm) | M2 / M5 |
-| Q4 | Whether a dashboard or SQL serving layer is wanted (D12 extension) | After M6 |
-| Q5 | Confirm D24 and D25 design: 12 months or fewer, DuckDB + Spark SQL only | Before M5 |
+| Q3 | ~~How many months to replay~~ Resolved: stream replays 2026-01; batch uses 24 months (D25, to confirm) | M2 / M5 |
+| Q4 | Whether a dashboard or SQL serving layer is wanted (D12 extension) | After M7 |
+| Q5 | Confirm D24 and D25 design: 24 months, 12, or 49; DuckDB + Spark SQL only | Before M5 |
+| Q6 | Confirm D26 (medallion layout, stream builds daily marts) and D27 (flag instead of reject) | Before M4 |
+| Q7 | Spec details: the `fhvhv` vs `hvfhv` service value, and the extra Silver columns the KPIs need (`PLAN.md` §6.7 gaps) | Before M4 |
+| Q8 | Is the 2022 Airport fee comparison required? If so the range must start in 2021 or 2022 (D25) | Before M5 |
 
 ## Change Log
 
 | Date | Change |
 |---|---|
+| 2026-11-05 | Added D28: stream and batch stay separate stores, combined only at query time with a cutover date (option A). Batch range changed to 2024-01..2025-12. Kept the live-against-baseline KPI, now a query over the combined views. |
+| 2026-11-05 | Read `specs/2_…medallion…html` and `specs/3_KPI.html`. Added D26 (medallion layers, which path builds which mart) and D27 (flag instead of reject; would replace D22). Changed D25 from 12 to 24 months, because the catalog's multi-year KPIs need more history. Added Q6 to Q8. Added M4 rework, M6 (Spark ML); end-to-end is now M7, hardening M8. |
 | 2026-11-04 | Added D24 (batch path alongside the stream) and D25 (historical store and query engines). Updated D1 and D16. Resolved Q3, added Q5. |
 | 2026-11-02 | Initial log created from decisions in `PLAN.md`, `Steps.md`, and `installation.md`. |

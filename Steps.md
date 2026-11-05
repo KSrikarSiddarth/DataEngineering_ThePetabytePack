@@ -1,6 +1,6 @@
 # Steps.md — The Story of the NYC Taxi Stream + Batch Pipeline
 
-This project has two goals: **stream processing** of taxi trips through Kafka and Spark Structured Streaming (Chapters 1 to 4), and **batch processing of historic data** with a queryable historical store (Chapter 5). This file tells the build as a story, one chapter per milestone from `PLAN.md`. Each chapter has the **why**, the **how** (implementation details), and **how we know it worked**. Status markers are updated as work progresses.
+This project has two goals: **stream processing** of taxi trips through Kafka and Spark Structured Streaming (Chapters 1 to 4), and **batch processing of historic data** with queryable Silver and Gold layers and Spark ML models (Chapters 5 and 6). The data is organized as Bronze, Silver and Gold (`specs/2_nyc_taxi_medallion_architecture.html`) and the KPIs are defined in `specs/3_KPI.html`. This file tells the build as a story, one chapter per milestone from `PLAN.md`. Each chapter has the **why**, the **how** (implementation details), and **how we know it worked**. Status markers are updated as work progresses.
 
 **Legend:** ✅ done · 🚧 in progress · ⬜ not started
 
@@ -10,10 +10,11 @@ This project has two goals: **stream processing** of taxi trips through Kafka an
 | 1 | Infrastructure up (Kafka) | 🚧 written, not yet run (Docker unavailable on this machine) |
 | 2 | The producer | 🚧 built and tested without Kafka; Kafka path not run |
 | 3 | Spark: parse, validate, enrich | 🚧 built and tested locally on file input; Kafka source not run |
-| 4 | Spark: windowed aggregations (stream KPIs) | ⬜ |
-| 5 | Batch processing of historic data (batch KPIs, query benchmark) | ⬜ |
-| 6 | End-to-end with Compose | ⬜ |
-| 7 | Hardening and docs | ⬜ |
+| 4 | Silver conformance and stream Gold (daily KPI marts) | ⬜ |
+| 5 | Batch processing of historic data (Silver, monthly Gold, query benchmark) | ⬜ |
+| 6 | Spark ML on the historic data | ⬜ |
+| 7 | End-to-end with Compose | ⬜ |
+| 8 | Hardening and docs | ⬜ |
 
 ---
 
@@ -174,53 +175,84 @@ python scripts/reconcile.py
 
 ---
 
-## Chapter 4 — Spark: windowed aggregations ⬜
+## Chapter 4 — Silver conformance and stream Gold ⬜
 
-**The story.** One trip at a time is just data; the interesting part is what happens across many of them. Here the stream becomes insight, such as how busy each pickup zone is each hour and how people pay.
+**The story.** Chapter 3 cleaned the stream, but we built it before we had the full picture of what the project must answer. Two documents now say it exactly: `specs/2_nyc_taxi_medallion_architecture.html` defines Bronze, Silver and Gold tables, and `specs/3_KPI.html` lists every KPI with its question, calculation and Gold table. This chapter brings the stream in line with them. First the cleaned trips become **Silver** (one schema for all four services, typed, deduplicated, with data-quality flags). Then the stream becomes insight: **Gold** daily marts such as trips per day, demand by hour, revenue, trip efficiency, HVFHV economics and data quality.
 
 **Implementation plan**
-1. Set a watermark of 10 minutes on `tpep_pickup_datetime`, so Spark knows how late data can arrive and can finalize old windows.
-2. Add two aggregations:
-   - `agg_zone_hourly`: 1-hour tumbling window × pickup zone × service, computing trip count, average distance, and fare, tip, and revenue figures (null for services without fare data).
-   - `agg_service_hourly`: 1-hour window × service, computing trip count, for comparing demand across services.
-   - `agg_payment_5min`: 5-minute window × payment type, computing count and revenue (Yellow and Green only).
-3. Write both in append mode to Parquet, with checkpoints. Set `spark.sql.shuffle.partitions` to about 8 to suit a laptop.
-4. Add a console sink in dev mode for fast feedback.
+
+*A. Silver conformance*
+1. Rework the M3 output into `silver.trips`: renamed columns (`service_type`, `pu_location_id`, `distance_miles`, `base_fare`), plus `trip_id`, `duration_sec`, the typed fee columns, and the `dq_*` flags. The gaps between the spec and the current code are listed in `PLAN.md` §6.7.
+2. Add the dimension tables (`dim_zone`, `dim_payment_type`, `dim_ratecode`, `dim_hvfhs_company`).
+3. Derive `trip_id` as a deterministic hash (the TLC files have no key), then deduplicate with `dropDuplicatesWithinWatermark`, counting removed rows.
+4. Apply the validation policy (D27: flag rule violations in Silver, reject only unusable rows). Move the outputs to `output/stream/silver/trips` and `output/stream/silver_invalid`.
+5. Write `specs/silver-schema.md` from the medallion page, and a schema test against it.
+6. Add `kafka_timestamp` and `silver_write_ts` to the stream's Silver so latency can be measured, and write `scripts/evaluate_stream.py` for the targets in `evaluation.md`.
+
+*B. Stream Gold (daily marts)*
+6. Set the watermark (10 minutes) on the pickup time, so Spark can finalize old windows.
+7. Build `trips_daily`, `demand_hourly`, `zone_od_daily`, `revenue_daily`, `trip_efficiency_daily`, `hvfhv_economics_daily`, `hvfhv_service_daily` and `data_quality_daily` with event-time windows, in append mode to `output/stream/gold/`, with checkpoints. Services without the needed fields are excluded (no FHV in revenue). Set `spark.sql.shuffle.partitions` to about 8.
+8. Add a console sink in dev mode for fast feedback.
 
 **How we know it worked**
-- For fully closed windows, the sum of trip counts across windows equals the clean-trip count.
-- One zone-hour spot-checked against a pandas computation on the same parquet matches.
+- The Silver schema test passes.
+- Per service, Silver + invalid + duplicates removed = messages sent.
+- For fully closed windows, the sum of `trips_daily` counts equals the Silver trip count for those days; one zone-day spot-checked in DuckDB matches.
+- Every Gold table has the KPI columns that `specs/3_KPI.html` gives for its scope.
 
-**Expect:** in append mode, a window's output appears only after the watermark passes it. The last windows may not show until more data (or a trailing event) arrives. That is correct behavior and should be documented.
+**Expect:** in append mode, a window's output appears only after the watermark passes it, so the last windows may not show until more data (or a trailing event) arrives. That is correct and should be documented. Duplicates are only removed within the watermark delay.
 
-**KPIs this chapter answers** (full list in `PLAN.md` §6.6): demand per zone and service per window, trip rate, revenue rate and average fare, trip distance and duration, tip rate, and live data-quality rates (rejected, late, duplicate and malformed).
+**Open decisions:** D26 (layers and which path builds which mart) and D27 (flag instead of reject) should be confirmed before this chapter starts.
 
 ---
 
 ## Chapter 5 — Batch processing of historic data ⬜
 
-**The story.** The stream tells us what is happening right now, in windows of minutes. But a month of replayed data cannot say whether Friday nights are always this busy, or how yellow cabs compare with app-based services over a year. For that we need history, and with history comes the other big data problem: not speed, but size. A year of HVFHV alone is about 250 million rows. This chapter adds the second path through the project: a batch job that processes many months at once into a store we can query with SQL, and a benchmark that shows how queries behave at that size.
+**The story.** The stream tells us what is happening right now. But a month of replayed data cannot say whether demand is growing year over year, how seasonality looks, or how fares moved after the congestion fee began. For that we need history, and with history comes the other big data problem: not speed, but size. Two years of HVFHV alone is about 500 million rows. This chapter adds the second path through the project: a batch job that processes many months at once into Silver, builds the monthly and pipeline-health Gold marts, and a query benchmark that shows how SQL behaves at that size.
 
 **Implementation plan**
-1. Download 12 months (2025-02 to 2026-01) of all four datasets with the existing `scripts/download_data.py --months ...`. This is about 6 GB, so check free disk first. The months list goes in a new `batch:` section of `stream-config.yaml`.
-2. Add a typed-Parquet entry point to `spark/transform.py` that skips `from_json`. Normalize, validate and enrich stay the same functions the stream uses, so a trip is judged identically in both paths.
-3. Write `spark/batch_job.py`: process one month at a time (to keep memory in check), write clean trips to `output/historical/service=*/year=*/month=*` and rejects to `output/historical_invalid/`, with dynamic partition overwrite so rerunning a month is safe.
-4. Add the `spark-batch` Compose service (profile `batch`). It needs no Kafka.
-5. Write the batch KPI queries as SQL files in `scripts/queries/`: trends per service, peak hours, top routes and the borough flow matrix, fare per mile, tip percentage, airport trips, percentiles, and reject rate over time.
-6. Write `scripts/benchmark_queries.py`: run each query on DuckDB and Spark SQL, and compare a partition-pruned query against a full scan. Print a timing table.
-7. Extend `reconcile.py` with `--batch`: per service and month, source rows against historical plus invalid rows.
+1. Download 24 months (2024-01 to 2025-12, ending before the streamed month) of all four datasets with the existing `scripts/download_data.py --months ...` (13–14 GB raw; check free disk first). Twelve months would not be enough for the year-over-year and fee-policy KPIs (D25). The months go in a new `batch:` section of `stream-config.yaml`. The download script also records each file's TLC publication date for `batch_run_log`.
+2. Add a typed-Parquet entry point to `spark/transform.py` that skips `from_json`. Normalize, validate, enrich and deduplicate stay the same functions the stream uses, so a trip is judged identically in both paths.
+3. Write `spark/batch_job.py`: process one month at a time (to keep memory in check), write `output/batch/silver/trips` partitioned by `service_type/year/month` and `output/batch/silver_invalid/`, with dynamic partition overwrite so rerunning a month is safe. Write one row per file to `silver.batch_run_log`.
+4. Build the Gold marts in batch: the daily marts again over the full history, the monthly marts (`trips_monthly`, `revenue_monthly`, `trip_efficiency_monthly`, `demand_monthly_hourly`, `zone_od_monthly`, `hvfhv_economics_monthly`), and the pipeline-health marts (`batch_run_metrics`, `data_quality_monthly`), using the same mart definitions as the stream where they overlap.
+5. Add the `spark-batch` Compose service (profile `batch`). It needs no Kafka.
+6. Write the KPI queries as SQL files in `scripts/queries/`, and `scripts/benchmark_queries.py`: run each on DuckDB and Spark SQL, and compare a partition-pruned query against a full scan. Print a timing table.
+7. Extend `reconcile.py` with `--batch`: per service and month, source rows against Silver + invalid + duplicates removed.
+8. Combine the two paths at query time only (D28): `scripts/combined_views.py` builds views that take batch rows before the cutover date (2026-01-01) and stream rows from it on, and `scripts/queries/live_vs_baseline.sql` compares the streamed days with the batch history. The stream's output is never written into the batch store.
 
 **How we know it worked**
-- Per service and month, historical + invalid rows equal the source file's row count.
-- Rerunning one month changes nothing else.
-- For the streamed month, batch counts match the stream's counts (clean profile, same HVFHV cap).
-- Every batch KPI returns a result, and the benchmark shows the pruned query reading fewer files than the full scan.
+- Per service and month, Silver + invalid + duplicates removed equal the source file's row count (the catalog's "Bronze-to-Silver row reconciliation" is 0).
+- Rerunning one month changes nothing else, and adds a second `batch_run_log` row.
+- For the streamed month, a throwaway batch run (`output/check/`, deleted afterwards) matches the stream's daily marts (clean profile, same HVFHV cap).
+- In the combined views every date comes from exactly one side, and the combined row count is batch + stream.
+- Every Historical-trends and Batch-pipeline-health KPI returns a result, or "not enough history" if the range is too short; the benchmark shows the pruned query reading fewer files than the full scan.
 
-**Watch for:** HVFHV memory and time on a laptop (loop over months, keep shuffle partitions low, or start with 3 months), monthly files that contain rows from other months, and column changes between months.
+**Watch for:** HVFHV memory and time on a laptop (loop over months, keep shuffle partitions low, or start with 3 months), monthly files that contain rows from other months, column changes between months, and disk use (about 40–50 GB; see `storage_requirements.md`).
 
 ---
 
-## Chapter 6 — End-to-end with Compose ⬜
+## Chapter 6 — Spark ML on the historic data ⬜
+
+**The story.** History is also training data. With two years of Silver and Gold we can ask what will happen: how many trips each zone will see next hour, what a trip should cost, how long it will take, whether it will be tipped, and which trips look wrong. The KPI catalog lists the models and the metrics that show whether they are any good, and whether they stay good.
+
+**Implementation plan**
+1. Build `silver.ml_features` (lags, hour, day of week, holiday flag, zone profile). Leave out fields known only after the trip (dropoff time, total amount, tip) wherever they would leak the label. Zone-hour demand models use the small aggregated table; trip-level models train on a configurable sample.
+2. Train and score, with Spark MLlib: demand forecast (`GBTRegressor`), fare prediction (Yellow and Green), duration and ETA, tip prediction (card payments only), wait time and shared-ride match (HVFHV), zone clustering and demand-pattern clustering (`KMeans`), anomaly detection, and `PCA`.
+3. Write predictions to `output/batch/gold/ml_*` and the model KPIs (training time, error per scoring month, feature drift, lift over baseline, cross-validation spread) to `ml_model_metrics`.
+4. Add the `spark-ml` Compose service (profile `ml`).
+5. Write `scripts/evaluate_models.py`, which checks the metrics against the proposed targets in `evaluation.md`.
+
+**How we know it worked**
+- Each model trains, writes its predictions table, and adds a metrics row with the metric named in the catalog.
+- A test shows no excluded column is in any feature list.
+- Lift over the baseline ("same hour last week") is reported for each model.
+- The same seed gives the same metrics.
+
+**Known limits:** the TLC files have no weather or holidays (holidays can be added as a small table), no driver or passenger IDs (so no recommendation models), and FHV has no fares. Spark ML has no ARIMA or Prophet, so forecasting uses lag features with tree or linear models.
+
+---
+
+## Chapter 7 — End-to-end with Compose ⬜
 
 **The story.** So far each piece was started by hand. Now we make the whole thing run with a single command, the way someone cloning the project would expect.
 
@@ -229,8 +261,7 @@ python scripts/reconcile.py
 2. Order startup with `depends_on`: Kafka healthy → `kafka-init` completed → Spark job started → producer started. Starting Spark before the producer means the stream is already listening.
 3. Mount `./data` read-only and `./output` for results. If Windows file permissions cause trouble, switch to a named volume.
 4. Add `tests/smoke_test.ps1`: bring the stack up with a small `MAX_RECORDS`, wait for completion, then check that the outputs exist and the counts reconcile.
-
-5. Document how to run the batch backfill next to the stream (`docker compose --profile batch up spark-batch`); it runs on its own and does not wait for Kafka.
+5. Document how to run the batch backfill and the ML job next to the stream (`docker compose --profile batch up spark-batch`, `--profile ml up spark-ml`); they run on their own and do not wait for Kafka.
 
 **How we know it worked**
 - From a clean checkout, `docker compose up --build` processes the whole file with no manual steps.
@@ -238,7 +269,7 @@ python scripts/reconcile.py
 
 ---
 
-## Chapter 7 — Hardening and docs ⬜
+## Chapter 8 — Hardening and docs ⬜
 
 **The story.** A pipeline that works once is a demo. One that survives a restart and can be handed to someone else is a project.
 
@@ -254,7 +285,7 @@ python scripts/reconcile.py
 
 ## Epilogue — Stretch goals
 
-Late and out-of-order data to show the watermark at work (already partly built into the producer's fault injection); aggregates published back to Kafka with a small dashboard; the full uncapped HVFHV month; maps built from the taxi zone shapefile; a Delta Lake or Iceberg sink; live window KPIs compared with the historical baseline; and Trino or a database as an extra query engine over the historical store.
+Late and out-of-order data to show the watermark at work (already partly built into the producer's fault injection); aggregates published back to Kafka with a small dashboard; the full uncapped HVFHV month; maps built from the taxi zone shapefile; a Delta Lake or Iceberg sink; live daily-mart KPIs compared with the historical baseline; minute-scale stream KPIs (not in the KPI catalog); and Trino or a database as an extra query engine over the Silver and Gold layers.
 
 ---
 
@@ -262,6 +293,8 @@ Late and out-of-order data to show the watermark at work (already partly built i
 
 | Date | Change |
 |---|---|
+| 2026-11-05 | Stream and batch kept in separate stores and combined only at query time with a cutover date (D28, option A). Batch range is now 2024-01 to 2025-12. The live-against-baseline KPI stays, as a query over the combined views. |
+| 2026-11-05 | Read the medallion and KPI specs and updated all planning docs. Chapter 4 is now Silver conformance plus stream Gold daily marts (the M3 output must be reworked to match Silver). Chapter 5 now builds Silver and the monthly and health marts, over 24 months instead of 12. New Chapter 6 (Spark ML); end-to-end Compose is Chapter 7 and hardening Chapter 8. Added D26, D27. Planning only, no code. |
 | 2026-11-04 | Goal widened to stream + batch processing of historic data. Added the batch milestone as M5 (Chapter 5); end-to-end Compose is now M6 and hardening is M7. Added KPI lists, D24 and D25. Planning only, no code. |
 | 2026-11-02 | Created `PLAN.md`, `.gitignore`, and this file. No pipeline code written yet. |
 | 2026-11-04 | M3 built: Spark parse/normalize/enrich/validate job, Docker image and Compose service, reconcile script. Streaming run verified on file input only. Fixed a producer bug found by the Spark tests (null injection could erase an injected invalid value). |

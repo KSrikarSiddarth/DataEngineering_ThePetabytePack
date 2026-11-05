@@ -190,6 +190,8 @@ Remove-Item -Recurse -Force output
 
 ## 10. Not built yet
 
-- Windowed aggregations, the stream KPIs (M4).
-- **Batch processing of historic data (M5):** the 12-month download, the `spark-batch` job, the historical store in `output/historical/`, the KPI queries and the query benchmark. Commands will be added here when M5 is built.
-- The single-command `docker compose up --build` for the whole pipeline (M6) and the restart test (M7). Until M6, start the services in the order above.
+- **Silver conformance and stream Gold (M4):** the stream output moves from `output/trips_clean` and `output/invalid` to `output/stream/silver/trips`, `output/stream/silver_invalid` and `output/stream/gold/`, and the columns are renamed to the Silver schema. Sections 5 to 7 and the scripts (`reconcile.py`, `show_results.py`) will change then.
+- **Batch processing of historic data (M5):** the 24-month download, the `spark-batch` job, Silver and Gold under `output/batch/`, the KPI queries and the query benchmark.
+- **Spark ML (M6):** the `spark-ml` job and the model metrics.
+- The single-command `docker compose up --build` for the whole pipeline (M7) and the restart test (M8). Until M7, start the services in the order above.
+- Commands for M4 to M6 will be added here when they are built. Until then, everything in this file describes the M3 outputs.
