@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Taxi KPI Catalog</title>
+<style>
+  :root {
+    --bg: #fafaf7; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6b65; --line: #e4e2da;
+    --accent: #b8860b; --accent-soft: #f7efd6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9b9a92; --line: #33332f;
+      --accent: #e0b04a; --accent-soft: #2e2817;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9b9a92; --line: #33332f;
+    --accent: #e0b04a; --accent-soft: #2e2817;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { padding: 36px 24px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0 0 6px; font-size: 24px; }
+  header p { margin: 0; color: var(--muted); max-width: 780px; }
+  nav { position: sticky; top: 0; background: var(--panel); border-bottom: 1px solid var(--line);
+    padding: 10px 24px; display: flex; flex-wrap: wrap; gap: 8px; z-index: 10; }
+  nav a { color: var(--ink); text-decoration: none; padding: 5px 12px; border: 1px solid var(--line);
+    border-radius: 999px; font-size: 13px; }
+  nav a:hover { border-color: var(--accent); color: var(--accent); }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  section { margin-bottom: 36px; }
+  h2 { font-size: 18px; margin: 0 0 4px; color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; overflow: hidden; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--accent-soft); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td.q { font-style: italic; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px;
+    background: var(--bg); border: 1px solid var(--line); padding: 1px 4px; border-radius: 3px; }
+  .note { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 10px 14px;
+    border-radius: 4px; margin: 14px 0; font-size: 13px; }
+  @media (max-width: 800px) { th, td { font-size: 12px; padding: 6px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NYC Taxi KPI Catalog</h1>
+  <p>Each KPI, the business question it answers, how it is calculated, and the Gold table that serves it.</p>
+</header>
+
+<nav>
+  <a href="#demand">Demand and volume</a>
+  <a href="#revenue">Revenue and pricing</a>
+  <a href="#efficiency">Trip efficiency</a>
+  <a href="#hvfhv">HVFHV platform</a>
+  <a href="#dq">Data quality</a>
+  <a href="#historic">Historical trends (batch)</a>
+  <a href="#pipeline">Batch pipeline health</a>
+  <a href="#ml">Machine learning (Spark ML)</a>
+  <a href="#mlops">Model operations</a>
+</nav>
+
+<main>
+
+<section id="demand">
+  <h2>Demand and volume</h2>
+  <div class="meta">Scope: all trip types unless noted.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Trips per day, week, month, by service type</td><td class="q">How much demand is there, and how is it growing or shrinking over time?</td><td><code>COUNT(trip_id)</code> grouped by date and <code>service_type</code></td><td><code>gold.trips_daily</code></td></tr>
+      <tr><td>Service-type share of trips</td><td class="q">Which services make up the market, and how is that mix changing?</td><td>Trips per type ÷ total trips</td><td><code>gold.trips_daily</code></td></tr>
+      <tr><td>Trips by hour and day of week</td><td class="q">When is demand highest, and when is it lowest? When should supply be increased?</td><td><code>COUNT(trip_id)</code> grouped by <code>pickup_hour</code> and day of week</td><td><code>gold.demand_hourly</code></td></tr>
+      <tr><td>Top pickup and dropoff zones</td><td class="q">Where do trips start and end most often? Which zones are the busiest?</td><td><code>COUNT(trip_id)</code> grouped by <code>pu_location_id</code> and <code>do_location_id</code></td><td><code>gold.zone_od_daily</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="revenue">
+  <h2>Revenue and pricing</h2>
+  <div class="meta">Scope: Yellow and Green only. FHV has no fare fields.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Total revenue by zone or borough</td><td class="q">Which areas generate the most revenue?</td><td><code>SUM(total_amount)</code> grouped by pickup zone or borough</td><td><code>gold.revenue_daily</code></td></tr>
+      <tr><td>Average fare per trip</td><td class="q">What does a typical trip cost the passenger, and how does that change over time?</td><td><code>AVG(total_amount)</code></td><td><code>gold.revenue_daily</code></td></tr>
+      <tr><td>Average fare per mile</td><td class="q">How efficiently is distance being turned into revenue?</td><td><code>SUM(total_amount) ÷ SUM(distance_miles)</code></td><td><code>gold.revenue_daily</code></td></tr>
+      <tr><td>Tip rate (credit card only)</td><td class="q">How generous are passengers paying by card, and does it vary by zone or time?</td><td><code>SUM(tip_amount) ÷ SUM(base_fare)</code>, where <code>payment_type = 1</code></td><td><code>gold.revenue_daily</code></td></tr>
+      <tr><td>Card vs cash share</td><td class="q">How are passengers paying, and is that shifting?</td><td>Trips per <code>payment_label</code> ÷ total trips</td><td><code>gold.revenue_daily</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="efficiency">
+  <h2>Trip efficiency</h2>
+  <div class="meta">Scope: all trips with valid timestamps.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Average trip duration</td><td class="q">How long does a typical trip take, and is it getting longer?</td><td><code>AVG(duration_sec)</code></td><td><code>gold.trip_efficiency_daily</code></td></tr>
+      <tr><td>Average speed</td><td class="q">How fast is traffic moving, and where is it slowest?</td><td><code>SUM(distance_miles) ÷ (SUM(duration_sec) ÷ 3600)</code></td><td><code>gold.trip_efficiency_daily</code></td></tr>
+      <tr><td>Average distance by zone pair</td><td class="q">How far do people travel between common origin and destination pairs?</td><td><code>AVG(distance_miles)</code> grouped by zone pair</td><td><code>gold.zone_od_daily</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="hvfhv">
+  <h2>HVFHV platform</h2>
+  <div class="meta">Scope: Uber, Lyft, Via, and Juno trips only.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Driver pay share of base fare</td><td class="q">What share of the fare reaches the driver, and does it differ by company?</td><td><code>SUM(driver_pay) ÷ SUM(base_fare)</code>, grouped by <code>hvfhs_license_num</code></td><td><code>gold.hvfhv_economics_daily</code></td></tr>
+      <tr><td>Fee and surcharge share of passenger cost</td><td class="q">How much of what passengers pay goes to fees and surcharges rather than the trip?</td><td>(total passenger cost − base fare) ÷ total passenger cost</td><td><code>gold.hvfhv_economics_daily</code></td></tr>
+      <tr><td>Wait time</td><td class="q">How long do passengers wait between requesting a ride and being picked up?</td><td><code>AVG(pickup_ts − request_ts)</code></td><td><code>gold.hvfhv_service_daily</code></td></tr>
+      <tr><td>Response time</td><td class="q">How quickly does a driver reach the pickup point after a request?</td><td><code>AVG(on_scene_ts − request_ts)</code></td><td><code>gold.hvfhv_service_daily</code></td></tr>
+      <tr><td>Shared-ride match rate</td><td class="q">When passengers ask for a shared ride, how often does the platform find a match?</td><td><code>COUNT(shared_match_flag = 'Y') ÷ COUNT(shared_request_flag = 'Y')</code></td><td><code>gold.hvfhv_service_daily</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="dq">
+  <h2>Data quality and pipeline health</h2>
+  <div class="meta">Scope: all trip types. Monitors whether the data can be trusted.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Null rate per key column</td><td class="q">Are key fields like timestamps and zone IDs complete?</td><td><code>SUM(dq_null_*) ÷ COUNT(*)</code></td><td><code>gold.data_quality_daily</code></td></tr>
+      <tr><td>Dropoff-before-pickup share</td><td class="q">How many trips have impossible timestamps?</td><td><code>SUM(dq_dropoff_before_pickup) ÷ COUNT(*)</code></td><td><code>gold.data_quality_daily</code></td></tr>
+      <tr><td>Unmatched zone share</td><td class="q">How many location IDs fail to join to the zone lookup?</td><td><code>SUM(dq_unmatched_pu_zone + dq_unmatched_do_zone) ÷ (2 × COUNT(*))</code></td><td><code>gold.data_quality_daily</code></td></tr>
+      <tr><td>Zero or negative distance and fare share</td><td class="q">How many trips have missing or invalid distance or fare values?</td><td><code>SUM(dq_zero_distance + dq_negative_fare) ÷ COUNT(*)</code></td><td><code>gold.data_quality_daily</code></td></tr>
+      <tr><td>Row count vs prior month</td><td class="q">Did this month's file load completely, or is data missing?</td><td>Current month row count ÷ prior month row count</td><td><code>gold.data_quality_daily</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="historic">
+  <h2>Historical trends (batch)</h2>
+  <div class="meta">Scope: monthly grain built from the full history of batch loads. Answers long-term questions that daily marts cannot.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Month-over-month and year-over-year trip growth</td><td class="q">Is demand growing or shrinking compared with last month and last year?</td><td>(Trips this period − Trips prior period) ÷ Trips prior period</td><td><code>gold.trips_monthly</code></td></tr>
+      <tr><td>Rolling 12-month average trips</td><td class="q">What is the underlying demand trend once seasonal spikes are smoothed out?</td><td><code>AVG(trips)</code> over the last 12 months, by service type</td><td><code>gold.trips_monthly</code></td></tr>
+      <tr><td>Seasonality index</td><td class="q">Which months are consistently busier or quieter, and how large is the swing?</td><td>Trips in month ÷ average monthly trips for that year</td><td><code>gold.trips_monthly</code></td></tr>
+      <tr><td>Service-type share shift over years</td><td class="q">How has the mix moved between yellow, green, FHV, and HVFHV over time?</td><td>Trips per type per year ÷ total trips per year</td><td><code>gold.trips_monthly</code></td></tr>
+      <tr><td>Card vs cash trend</td><td class="q">Is cash usage declining, and how fast?</td><td>Card trips ÷ total trips, by month</td><td><code>gold.revenue_monthly</code></td></tr>
+      <tr><td>Average fare per mile trend</td><td class="q">Have fares per mile risen over the years, and do jumps line up with fee or policy changes?</td><td><code>SUM(total_amount) ÷ SUM(distance_miles)</code>, by month</td><td><code>gold.revenue_monthly</code></td></tr>
+      <tr><td>Fee impact around policy dates</td><td class="q">How did average total cost change after the Airport fee (2022) and the CBD congestion fee (2025) were introduced?</td><td>Average total amount and fee amounts, before vs after the effective date</td><td><code>gold.revenue_monthly</code></td></tr>
+      <tr><td>Average trip duration and speed trend</td><td class="q">Is travel getting slower over the years, and in which hours is the change largest?</td><td><code>AVG(duration_sec)</code> and speed by year and <code>pickup_hour</code></td><td><code>gold.trip_efficiency_monthly</code></td></tr>
+      <tr><td>Peak-hour profile change</td><td class="q">Has the daily demand pattern shifted, for example toward evening or late-night trips?</td><td>Share of monthly trips per hour, compared year over year</td><td><code>gold.demand_monthly_hourly</code></td></tr>
+      <tr><td>Zone demand growth or decline</td><td class="q">Which zones are gaining or losing trips over time?</td><td>Trips per zone per year, and the change from the prior year</td><td><code>gold.zone_od_monthly</code></td></tr>
+      <tr><td>Driver pay share trend by company</td><td class="q">Has the share of fare paid to drivers changed over time for each HVFHV company?</td><td><code>SUM(driver_pay) ÷ SUM(base_fare)</code>, by month and <code>hvfhs_license_num</code></td><td><code>gold.hvfhv_economics_monthly</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="pipeline">
+  <h2>Batch pipeline health</h2>
+  <div class="meta">Scope: batch runs over historical files. Monitors whether the historical record is complete, current, and reproducible.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Batch run success rate</td><td class="q">How often do monthly batch loads finish without failure?</td><td>Successful runs ÷ total runs</td><td><code>gold.batch_run_metrics</code></td></tr>
+      <tr><td>Data freshness lag</td><td class="q">How many days after TLC publishes a monthly file is it available in Gold?</td><td><code>AVG(gold_available_ts − tlc_published_date)</code></td><td><code>gold.batch_run_metrics</code></td></tr>
+      <tr><td>Bronze-to-Silver row reconciliation</td><td class="q">Do the rows that left Bronze match the rows in Silver after cleaning and de-duplication?</td><td>Silver rows + removed duplicates − Bronze rows (should be 0)</td><td><code>gold.batch_run_metrics</code></td></tr>
+      <tr><td>Duplicate rate by month</td><td class="q">How many source records are duplicates, and is that changing?</td><td>Duplicate rows removed on <code>trip_id</code> ÷ Bronze rows</td><td><code>gold.data_quality_monthly</code></td></tr>
+      <tr><td>Late correction volume</td><td class="q">How many rows change when a month is reloaded, meaning TLC corrected earlier data?</td><td>Rows whose values differ between the current and prior load of the same month ÷ total rows</td><td><code>gold.data_quality_monthly</code></td></tr>
+      <tr><td>Schema drift events</td><td class="q">Did a file add, rename, or drop columns compared with the prior month?</td><td>Count of columns added, removed, or renamed versus the previous file</td><td><code>gold.batch_run_metrics</code></td></tr>
+      <tr><td>Historical null and unmatched-zone drift</td><td class="q">Are data quality problems getting worse or better over time?</td><td>Change in null rate and unmatched-zone share, month over month</td><td><code>gold.data_quality_monthly</code></td></tr>
+      <tr><td>Batch runtime and throughput</td><td class="q">Is processing getting slower as data grows, and how much time does each month need?</td><td>Runtime per month; rows processed ÷ runtime in seconds</td><td><code>gold.batch_run_metrics</code></td></tr>
+      <tr><td>Backfill completeness</td><td class="q">Which months in the historical range are still missing or unprocessed?</td><td>Months loaded ÷ months expected in the target range</td><td><code>gold.batch_run_metrics</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="ml">
+  <h2>Machine learning (Spark ML)</h2>
+  <div class="meta">Scope: models trained with Spark MLlib on Silver and Gold data. The KPI is the model metric; the question describes what the predictions let the business do.</div>
+  <table>
+    <thead><tr><th>Use case</th><th>Question it answers</th><th>Spark ML approach</th><th>Model KPI</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Demand forecasting (trips per zone per hour)</td><td class="q">How many trips will each zone see in the next hour or day, and where will supply fall short?</td><td><code>GBTRegressor</code> or <code>RandomForestRegressor</code> on lag, hour, day-of-week, and holiday features</td><td>RMSE, MAE, WAPE</td><td><code>gold.ml_demand_forecast</code></td></tr>
+      <tr><td>Fare prediction (Yellow and Green)</td><td class="q">What should a trip cost before it starts, and which trips deviate most from the estimate?</td><td><code>LinearRegression</code> or <code>GBTRegressor</code> on distance, zones, hour, rate code</td><td>MAE, R²</td><td><code>gold.ml_fare_predictions</code></td></tr>
+      <tr><td>Trip duration and ETA</td><td class="q">How long will a trip take at a given time, and where is traffic least predictable?</td><td><code>GBTRegressor</code> on zone pair, hour, day of week, distance</td><td>MAE in minutes, share of trips within ±10%</td><td><code>gold.ml_duration_predictions</code></td></tr>
+      <tr><td>Tip prediction (credit card only)</td><td class="q">Which trips are likely to get a generous tip, and what drives it?</td><td><code>LogisticRegression</code> or <code>RandomForestClassifier</code> for tip of 20% or more</td><td>AUC-ROC, F1, precision, recall</td><td><code>gold.ml_tip_predictions</code></td></tr>
+      <tr><td>Wait-time prediction (HVFHV)</td><td class="q">How long will a passenger wait, and in which zones and hours is service weakest?</td><td><code>GBTRegressor</code> on pickup zone, hour, company</td><td>MAE in seconds</td><td><code>gold.ml_wait_predictions</code></td></tr>
+      <tr><td>Shared-ride match prediction (HVFHV)</td><td class="q">When a passenger requests a shared ride, how likely is a match, and where does matching fail?</td><td><code>LogisticRegression</code> or <code>GBTClassifier</code> on requests with <code>shared_request_flag = 'Y'</code></td><td>AUC-ROC, accuracy</td><td><code>gold.ml_shared_match_predictions</code></td></tr>
+      <tr><td>Zone segmentation</td><td class="q">Which zones behave alike, for example commuter, nightlife, or airport zones?</td><td><code>KMeans</code> on per-zone demand profile (hourly shape, average fare, distance)</td><td>Silhouette score</td><td><code>gold.ml_zone_clusters</code></td></tr>
+      <tr><td>Hourly demand-pattern clustering</td><td class="q">What are the typical daily demand shapes, and which days follow which shape?</td><td><code>KMeans</code> or <code>BisectingKMeans</code> on 24-hour demand curves</td><td>Silhouette score, cluster stability</td><td><code>gold.ml_demand_pattern_clusters</code></td></tr>
+      <tr><td>Anomaly detection</td><td class="q">Which trips have impossible fares, speeds, or durations, and are they data errors or real events?</td><td>Residuals from the fare or duration model, or distance to the nearest <code>KMeans</code> centroid</td><td>Anomaly rate, share of flagged trips confirmed as bad</td><td><code>gold.ml_trip_anomalies</code></td></tr>
+      <tr><td>Feature reduction</td><td class="q">Which features carry the signal, and can the model be simplified?</td><td><code>PCA</code> on fare and trip features</td><td>Variance explained</td><td><code>gold.ml_model_metrics</code></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="mlops">
+  <h2>Model operations</h2>
+  <div class="meta">Scope: applies to every model above. Monitors whether the models stay accurate and worth running.</div>
+  <table>
+    <thead><tr><th>KPI</th><th>Question it answers</th><th>Calculation</th><th>Gold table</th></tr></thead>
+    <tbody>
+      <tr><td>Training time and cost</td><td class="q">How long does each retrain take as data grows?</td><td>Training runtime per model per run</td><td><code>gold.ml_model_metrics</code></td></tr>
+      <tr><td>Prediction error over time</td><td class="q">Is model accuracy degrading month by month?</td><td>RMSE, MAE, or AUC tracked per scoring month</td><td><code>gold.ml_model_metrics</code></td></tr>
+      <tr><td>Feature drift</td><td class="q">Have input distributions, such as fare per mile or trip distance, shifted from the training period?</td><td>Distribution distance between training and scoring data, per feature</td><td><code>gold.ml_model_metrics</code></td></tr>
+      <tr><td>Lift over baseline</td><td class="q">Does the model beat a simple rule, such as "same hour last week"?</td><td>(Baseline error − model error) ÷ baseline error</td><td><code>gold.ml_model_metrics</code></td></tr>
+      <tr><td>Cross-validation spread</td><td class="q">How stable is the model across folds?</td><td>Standard deviation of the metric across folds</td><td><code>gold.ml_model_metrics</code></td></tr>
+    </tbody>
+  </table>
+  <div class="note">
+    <strong>Modeling cautions.</strong> Drop-off time, total amount, and tip are known only after the trip, so exclude them from features when predicting duration, fare, or tips. FHV has no fares or distance, and tips exist only for card payments, so train those models on the matching subsets. There are no driver or passenger IDs, so personalization models such as <code>ALS</code> are not possible. Weather and holidays are not in the TLC files, and adding them usually improves demand and duration models. Spark ML has no built-in ARIMA or Prophet, so time-series forecasting uses lag features with tree or linear models.
+  </div>
+</section>
+
+<div class="note">
+  <strong>Note.</strong> These KPIs are based on the four TLC trip datasets and the Taxi Zone Lookup. They were defined without a KPI.md file, so if you have one, the KPI list should be reconciled with it.
+</div>
+
+</main>
+</body>
+</html>

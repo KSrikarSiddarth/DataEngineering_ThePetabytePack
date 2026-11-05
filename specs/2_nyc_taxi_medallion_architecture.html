@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NYC Taxi Medallion Architecture</title>
+<style>
+  :root {
+    --bg: #fafaf7; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6b65; --line: #e4e2da;
+    --bronze: #a0622d; --bronze-soft: #f6ebe1;
+    --silver: #5c6670; --silver-soft: #eceff2;
+    --gold: #b8860b; --gold-soft: #f7efd6;
+    --arrow: #8a8a82;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9b9a92; --line: #33332f;
+      --bronze: #d89a62; --bronze-soft: #2e2219;
+      --silver: #aab4be; --silver-soft: #222529;
+      --gold: #e0b04a; --gold-soft: #2e2817;
+      --arrow: #77776f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #9b9a92; --line: #33332f;
+    --bronze: #d89a62; --bronze-soft: #2e2219;
+    --silver: #aab4be; --silver-soft: #222529;
+    --gold: #e0b04a; --gold-soft: #2e2817;
+    --arrow: #77776f;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { padding: 36px 24px 20px; border-bottom: 1px solid var(--line); }
+  header h1 { margin: 0 0 6px; font-size: 24px; }
+  header p { margin: 0; color: var(--muted); max-width: 780px; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px; }
+  h2 { font-size: 18px; margin: 36px 0 10px; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px;
+    background: var(--bg); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; }
+
+  /* Layers diagram */
+  .flow { display: grid; grid-template-columns: 1fr 52px 1fr 52px 1fr; align-items: stretch; gap: 0; }
+  .layer { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .layer h3 { margin: 0 0 4px; font-size: 16px; }
+  .layer .sub { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  .bronze { border-top: 4px solid var(--bronze); background: var(--bronze-soft); }
+  .silver { border-top: 4px solid var(--silver); background: var(--silver-soft); }
+  .gold   { border-top: 4px solid var(--gold);   background: var(--gold-soft); }
+  .tbl { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+  .tbl b { font-size: 13px; }
+  .tbl ul { margin: 4px 0 0; padding-left: 16px; color: var(--muted); font-size: 12.5px; }
+  .tbl ul li { margin: 1px 0; }
+  .arrow { display: flex; align-items: center; justify-content: center; color: var(--arrow); font-size: 26px; }
+  .arrow-label { position: relative; }
+  .transform { margin-top: 16px; font-size: 13px; color: var(--muted); }
+  .transform ul { padding-left: 16px; margin: 6px 0; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; overflow: hidden; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--gold-soft); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+
+  .note { background: var(--gold-soft); border-left: 3px solid var(--gold); padding: 10px 14px;
+    border-radius: 4px; margin: 14px 0; font-size: 13px; }
+
+  @media (max-width: 900px) {
+    .flow { grid-template-columns: 1fr; }
+    .arrow { transform: rotate(90deg); height: 36px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>NYC Taxi Medallion Architecture</h1>
+  <p>Transition from the raw TLC schemas (Yellow, Green, FHV, HVFHV, Taxi Zone Lookup) to the Silver and Gold schemas required by the KPIs.</p>
+</header>
+
+<main>
+
+<h2>Layer overview</h2>
+<div class="flow">
+
+  <!-- BRONZE -->
+  <div class="layer bronze">
+    <h3>Bronze: raw, as landed</h3>
+    <div class="sub">Exact copy of the TLC files. Original column names. No type casting.</div>
+    <div class="tbl"><b>bronze.yellow_tripdata</b>
+      <ul><li><code>tpep_pickup_datetime</code>, <code>tpep_dropoff_datetime</code></li>
+          <li><code>trip_distance</code>, <code>fare_amount</code>, <code>tip_amount</code>, <code>total_amount</code>, <code>Airport_fee</code></li></ul></div>
+    <div class="tbl"><b>bronze.green_tripdata</b>
+      <ul><li><code>lpep_pickup_datetime</code>, <code>lpep_dropoff_datetime</code></li>
+          <li><code>trip_type</code>, <code>ehail_fee</code></li></ul></div>
+    <div class="tbl"><b>bronze.fhv_tripdata</b>
+      <ul><li><code>pickup_datetime</code>, <code>dropOff_datetime</code></li>
+          <li><code>dispatching_base_num</code>, <code>SR_Flag</code></li></ul></div>
+    <div class="tbl"><b>bronze.fhvhv_tripdata</b>
+      <ul><li><code>request_datetime</code>, <code>on_scene_datetime</code>, <code>pickup_datetime</code>, <code>dropoff_datetime</code></li>
+          <li><code>base_passenger_fare</code>, <code>driver_pay</code>, <code>tips</code>, <code>shared_match_flag</code></li></ul></div>
+    <div class="tbl"><b>bronze.taxi_zone_lookup</b>
+      <ul><li><code>LocationID</code>, <code>Borough</code>, <code>Zone</code>, <code>service_zone</code></li></ul></div>
+  </div>
+
+  <div class="arrow"><span>&rarr;</span></div>
+
+  <!-- SILVER -->
+  <div class="layer silver">
+    <h3>Silver: cleaned, conformed</h3>
+    <div class="sub">One schema for all trip types. Typed, deduplicated, validated.</div>
+    <div class="tbl"><b>silver.trips</b> <span style="color:var(--muted)">(one row per trip)</span>
+      <ul><li><code>trip_id</code>, <code>service_type</code> (yellow | green | fhv | fhvhv)</li>
+          <li><code>request_ts</code>, <code>on_scene_ts</code>, <code>pickup_ts</code>, <code>dropoff_ts</code></li>
+          <li><code>pu_location_id</code>, <code>do_location_id</code></li>
+          <li><code>distance_miles</code>, <code>duration_sec</code>, <code>passenger_count</code></li>
+          <li><code>payment_type</code>, <code>base_fare</code>, <code>tip_amount</code>, <code>total_amount</code></li>
+          <li><code>driver_pay</code>, <code>shared_request_flag</code>, <code>shared_match_flag</code></li>
+          <li><code>dq_dropoff_before_pickup</code>, <code>dq_zero_distance</code>, <code>dq_unmatched_zone</code></li></ul></div>
+    <div class="tbl"><b>silver.dim_zone</b>
+      <ul><li><code>location_id</code>, <code>borough</code>, <code>zone</code>, <code>service_zone</code></li></ul></div>
+    <div class="tbl"><b>silver.dim_payment_type</b> / <b>silver.dim_ratecode</b>
+      <ul><li>Code-to-label lookups from the shared code tables</li></ul></div>
+    <div class="tbl"><b>silver.dim_hvfhs_company</b>
+      <ul><li><code>hvfhs_license_num</code> to name (Juno, Uber, Via, Lyft)</li></ul></div>
+    <div class="tbl"><b>silver.batch_run_log</b>
+      <ul><li>One row per file load: <code>source_file</code>, <code>tlc_published_date</code>, <code>bronze_rows</code>, <code>silver_rows</code>, <code>duplicates_removed</code>, <code>schema_hash</code>, <code>start_ts</code>, <code>end_ts</code>, <code>status</code></li></ul></div>
+    <div class="tbl"><b>silver.ml_features</b>
+      <ul><li>Trip-level and zone-hour-level feature sets for Spark ML: lags, hour, day of week, holiday flag, zone profile</li>
+          <li>Excludes post-trip fields (dropoff time, total amount, tip) where they would leak the label</li></ul></div>
+  </div>
+
+  <div class="arrow"><span>&rarr;</span></div>
+
+  <!-- GOLD -->
+  <div class="layer gold">
+    <h3>Gold: KPI-ready marts</h3>
+    <div class="sub">One table per KPI group. Built for dashboards and analysis.</div>
+    <div class="tbl"><b>gold.trips_daily</b>
+      <ul><li>Trip count and share, by date and <code>service_type</code></li></ul></div>
+    <div class="tbl"><b>gold.demand_hourly</b>
+      <ul><li>Trips by hour of day and day of week</li></ul></div>
+    <div class="tbl"><b>gold.zone_od_daily</b>
+      <ul><li>Trips by pickup and dropoff zone pair, by date</li></ul></div>
+    <div class="tbl"><b>gold.revenue_daily</b>
+      <ul><li>Total revenue, average fare, average fare per mile, tip rate (Yellow and Green)</li></ul></div>
+    <div class="tbl"><b>gold.trip_efficiency_daily</b>
+      <ul><li>Average duration, average speed, average distance</li></ul></div>
+    <div class="tbl"><b>gold.hvfhv_economics_daily</b>
+      <ul><li>Driver pay as share of base fare, fee share of passenger cost</li></ul></div>
+    <div class="tbl"><b>gold.hvfhv_service_daily</b>
+      <ul><li>Wait time, response time, shared-ride match rate</li></ul></div>
+    <div class="tbl"><b>gold.data_quality_daily</b>
+      <ul><li>Null rates, dq flag counts, unmatched zones, row counts per file</li></ul></div>
+    <div class="tbl"><b>Batch history marts (monthly)</b>
+      <ul><li><code>gold.trips_monthly</code>: growth, rolling average, seasonality, mix shift</li>
+          <li><code>gold.revenue_monthly</code>: fare per mile, card vs cash, fee impact</li>
+          <li><code>gold.trip_efficiency_monthly</code>: duration and speed trend</li>
+          <li><code>gold.demand_monthly_hourly</code>: peak-hour profile change</li>
+          <li><code>gold.zone_od_monthly</code>: zone growth and decline</li>
+          <li><code>gold.hvfhv_economics_monthly</code>: driver pay share trend</li></ul></div>
+    <div class="tbl"><b>Batch pipeline health</b>
+      <ul><li><code>gold.batch_run_metrics</code>: success rate, freshness, reconciliation, schema drift, runtime, backfill</li>
+          <li><code>gold.data_quality_monthly</code>: duplicate rate, late corrections, null and unmatched-zone drift</li></ul></div>
+    <div class="tbl"><b>Spark ML outputs</b>
+      <ul><li><code>gold.ml_demand_forecast</code>, <code>gold.ml_fare_predictions</code>, <code>gold.ml_duration_predictions</code></li>
+          <li><code>gold.ml_tip_predictions</code>, <code>gold.ml_wait_predictions</code>, <code>gold.ml_shared_match_predictions</code></li>
+          <li><code>gold.ml_zone_clusters</code>, <code>gold.ml_demand_pattern_clusters</code>, <code>gold.ml_trip_anomalies</code></li>
+          <li><code>gold.ml_model_metrics</code>: model KPIs, drift, lift, training time</li></ul></div>
+  </div>
+
+</div>
+
+<div class="transform">
+  <strong>Transformations between layers</strong>
+  <ul>
+    <li><b>Bronze to Silver:</b> rename timestamp columns (<code>tpep_</code>, <code>lpep_</code>, <code>pickup_datetime</code>, <code>dropOff_datetime</code>) to <code>pickup_ts</code> and <code>dropoff_ts</code>; cast types; map <code>trip_distance</code> and <code>trip_miles</code> to <code>distance_miles</code>; map <code>tip_amount</code> and <code>tips</code> to a single tip column; add <code>service_type</code>; union all four trip sources; derive <code>duration_sec</code>; compute dq flags; deduplicate on source key and timestamps.</li>
+    <li><b>Silver to Gold:</b> aggregate by date, hour, zone pair, and service type; filter by <code>service_type</code> where a KPI does not apply (for example, revenue excludes FHV because it has no fare fields).</li>
+    <li><b>Silver to Gold (batch history):</b> roll daily results up to monthly grain, then add period-over-period change, rolling windows, and seasonality indexes. Each load writes one row to <code>silver.batch_run_log</code>, which feeds <code>gold.batch_run_metrics</code>.</li>
+    <li><b>Silver to ML to Gold:</b> build <code>silver.ml_features</code> from <code>silver.trips</code> (lag, calendar, and zone features), train and score with Spark ML, and write predictions and model metrics to the <code>gold.ml_*</code> tables. Features exclude fields only known after the trip.</li>
+  </ul>
+</div>
+
+<h2>KPI to Gold table mapping</h2>
+<table>
+  <thead>
+    <tr><th>KPI</th><th>Gold table</th><th>Silver columns used</th><th>Scope</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Trips per day, share by service type</td><td><code>gold.trips_daily</code></td><td><code>pickup_ts</code>, <code>service_type</code></td><td>All</td></tr>
+    <tr><td>Trips by hour and day of week</td><td><code>gold.demand_hourly</code></td><td><code>pickup_ts</code>, <code>service_type</code></td><td>All</td></tr>
+    <tr><td>Top origin and destination zones</td><td><code>gold.zone_od_daily</code></td><td><code>pu_location_id</code>, <code>do_location_id</code></td><td>All</td></tr>
+    <tr><td>Revenue by zone or borough</td><td><code>gold.revenue_daily</code></td><td><code>total_amount</code>, <code>pu_location_id</code></td><td>Yellow, Green</td></tr>
+    <tr><td>Average fare, fare per mile</td><td><code>gold.revenue_daily</code></td><td><code>total_amount</code>, <code>distance_miles</code></td><td>Yellow, Green</td></tr>
+    <tr><td>Tip rate (credit card only)</td><td><code>gold.revenue_daily</code></td><td><code>tip_amount</code>, <code>base_fare</code>, <code>payment_type</code></td><td>Yellow, Green</td></tr>
+    <tr><td>Average duration, speed, distance</td><td><code>gold.trip_efficiency_daily</code></td><td><code>duration_sec</code>, <code>distance_miles</code></td><td>All with valid timestamps</td></tr>
+    <tr><td>Driver pay as share of base fare</td><td><code>gold.hvfhv_economics_daily</code></td><td><code>driver_pay</code>, <code>base_fare</code></td><td>FHVHV</td></tr>
+    <tr><td>Wait time, response time</td><td><code>gold.hvfhv_service_daily</code></td><td><code>request_ts</code>, <code>on_scene_ts</code>, <code>pickup_ts</code></td><td>FHVHV</td></tr>
+    <tr><td>Shared-ride match rate</td><td><code>gold.hvfhv_service_daily</code></td><td><code>shared_request_flag</code>, <code>shared_match_flag</code></td><td>FHVHV</td></tr>
+    <tr><td>Null rates, dropoff before pickup, unmatched zones</td><td><code>gold.data_quality_daily</code></td><td>All <code>dq_*</code> flags, source row counts</td><td>All</td></tr>
+    <tr><td>Month-over-month and year-over-year growth, rolling 12-month average, seasonality</td><td><code>gold.trips_monthly</code></td><td><code>pickup_date</code>, <code>service_type</code></td><td>All</td></tr>
+    <tr><td>Service-type share shift over years</td><td><code>gold.trips_monthly</code></td><td><code>pickup_date</code>, <code>service_type</code></td><td>All</td></tr>
+    <tr><td>Card vs cash trend, fare per mile trend, fee impact around policy dates</td><td><code>gold.revenue_monthly</code></td><td><code>payment_type</code>, <code>total_amount</code>, <code>distance_miles</code></td><td>Yellow, Green</td></tr>
+    <tr><td>Duration and speed trend</td><td><code>gold.trip_efficiency_monthly</code></td><td><code>duration_sec</code>, <code>distance_miles</code>, <code>pickup_hour</code></td><td>All with valid timestamps</td></tr>
+    <tr><td>Peak-hour profile change</td><td><code>gold.demand_monthly_hourly</code></td><td><code>pickup_ts</code>, <code>pickup_hour</code></td><td>All</td></tr>
+    <tr><td>Zone demand growth or decline</td><td><code>gold.zone_od_monthly</code></td><td><code>pu_location_id</code>, <code>do_location_id</code></td><td>All</td></tr>
+    <tr><td>Driver pay share trend by company</td><td><code>gold.hvfhv_economics_monthly</code></td><td><code>driver_pay</code>, <code>base_fare</code>, <code>hvfhs_license_num</code></td><td>HVFHV</td></tr>
+    <tr><td>Batch run success, freshness, reconciliation, schema drift, runtime, backfill</td><td><code>gold.batch_run_metrics</code></td><td><code>silver.batch_run_log</code> columns</td><td>All</td></tr>
+    <tr><td>Duplicate rate, late corrections, null and unmatched-zone drift</td><td><code>gold.data_quality_monthly</code></td><td><code>trip_id</code>, all <code>dq_*</code> flags, <code>silver.batch_run_log</code></td><td>All</td></tr>
+    <tr><td>Demand forecast, zone and demand-pattern clustering</td><td><code>gold.ml_demand_forecast</code>, <code>gold.ml_zone_clusters</code>, <code>gold.ml_demand_pattern_clusters</code></td><td><code>silver.ml_features</code></td><td>All</td></tr>
+    <tr><td>Fare, tip, and anomaly models</td><td><code>gold.ml_fare_predictions</code>, <code>gold.ml_tip_predictions</code>, <code>gold.ml_trip_anomalies</code></td><td><code>silver.ml_features</code></td><td>Yellow, Green (tips: card payments only)</td></tr>
+    <tr><td>Duration and ETA model</td><td><code>gold.ml_duration_predictions</code></td><td><code>silver.ml_features</code></td><td>All with valid timestamps</td></tr>
+    <tr><td>Wait-time and shared-match models</td><td><code>gold.ml_wait_predictions</code>, <code>gold.ml_shared_match_predictions</code></td><td><code>silver.ml_features</code></td><td>HVFHV</td></tr>
+    <tr><td>Model KPIs, drift, lift, training time</td><td><code>gold.ml_model_metrics</code></td><td>Model run outputs</td><td>All models</td></tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Scope note.</strong> FHV trips have no fare fields and no shared-ride match fields in the same form as HVFHV, so they appear only in volume, demand, zone, and efficiency marts. Silver keeps the full set of columns so the scope can be widened later without reprocessing Bronze. The monthly marts need the full history loaded, and the batch health KPIs need <code>silver.batch_run_log</code> to be written on every load, including the TLC publication date.
+</div>
+
+</main>
+</body>
+</html>
