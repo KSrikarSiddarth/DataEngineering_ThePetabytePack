@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taxi Star Schema</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Layout: one wide figure (the star), then two compact tables. Slate neutrals, one teal accent on the fact table. */
+:root {
+  --bg: #f5f6f8; --fg: #1c2330; --muted: #5d6676; --line: #aab2c0; --hair: #d9dde5;
+  --panel: #ffffff; --accent: #0f766e; --accent-soft: #dff1ee;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --fg: #e4e8ee; --muted: #9aa3b2; --line: #5b6577; --hair: #2b3340;
+    --panel: #1a2029; --accent: #4fd1c2; --accent-soft: #17332f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --fg: #e4e8ee; --muted: #9aa3b2; --line: #5b6577; --hair: #2b3340;
+  --panel: #1a2029; --accent: #4fd1c2; --accent-soft: #17332f; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.55;
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; text-wrap: balance; }
+h2 { font-size: 16px; margin: 0 0 8px; }
+p, li { max-width: 68ch; margin: 0; }
+.lede { color: var(--muted); }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--hair); border-radius: 6px; padding: 16px; }
+.scroll { overflow-x: auto; }
+svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--fg); }
+figcaption { margin-top: 10px; color: var(--muted); font-size: 13px; max-width: 80ch; }
+/* diagram parts */
+.box { fill: var(--panel); stroke: var(--line); stroke-width: 1.25; }
+.fact { fill: var(--panel); stroke: var(--accent); stroke-width: 2; }
+.fk { fill: var(--accent-soft); }
+.hair { stroke: var(--hair); stroke-width: 1; }
+.edge { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.t { font-family: var(--sans); font-size: 13px; fill: var(--fg); }
+.title { font-family: var(--sans); font-size: 15px; font-weight: 600; fill: var(--fg); }
+.m { font-family: var(--mono); font-size: 11.5px; fill: var(--fg); }
+.mute { font-family: var(--sans); font-size: 11.5px; fill: var(--muted); }
+.lbl { font-family: var(--sans); font-size: 12px; fill: var(--accent); font-weight: 600; }
+.arrow { fill: var(--accent); }
+/* tables */
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--panel); border: 1px solid var(--hair); }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+td code, li code { font-family: var(--mono); font-size: 12.5px; }
+tr:last-child td { border-bottom: 0; }
+ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 28px; align-items: start; }
+.cols > * { min-width: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Taxi star schema</h1>
+    <p class="lede">The Silver layer of the NYC taxi pipeline: one fact table of trips and four small lookup dimensions. The Gold marts are hourly roll-ups of the fact.</p>
+  </header>
+
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 1000 372" role="img" aria-label="Star schema: the silver.trips fact table in the centre, with dim_zone joined twice (pickup and dropoff) and dim_payment_type, dim_ratecode and dim_hvfhs_company joined once each, all many-to-one.">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <polygon class="arrow" points="0,0 10,5 0,10"/>
+          </marker>
+        </defs>
+
+        <!-- dim_zone (left) -->
+        <rect class="box" x="10" y="96" width="180" height="150" rx="4"/>
+        <text class="title" x="24" y="120">dim_zone</text>
+        <text class="mute" x="24" y="137">all services · 265 rows</text>
+        <line class="hair" x1="10" y1="145" x2="190" y2="145"/>
+        <text class="m" x="24" y="165">location_id</text><text class="mute" x="176" y="165" text-anchor="end">PK</text>
+        <text class="m" x="24" y="186">borough</text>
+        <text class="m" x="24" y="207">zone</text>
+        <text class="m" x="24" y="228">service_zone</text>
+
+        <!-- fact table (centre) -->
+        <rect class="fact" x="330" y="40" width="360" height="322" rx="4"/>
+        <text class="title" x="346" y="62">silver.trips</text>
+        <text class="mute" x="674" y="62" text-anchor="end">fact · one row per trip</text>
+        <line class="hair" x1="330" y1="76" x2="690" y2="76"/>
+        <text class="m" x="346" y="91">trip_id</text><text class="mute" x="674" y="91" text-anchor="end">key</text>
+        <text class="m" x="346" y="113">service_type</text><text class="mute" x="674" y="113" text-anchor="end">yellow · green · fhv · fhvhv</text>
+        <line class="hair" x1="330" y1="120" x2="690" y2="120"/>
+        <text class="m" x="346" y="135">pickup_ts · pickup_date · pickup_hour · dropoff_ts</text>
+        <line class="hair" x1="330" y1="142" x2="690" y2="142"/>
+
+        <rect class="fk" x="331" y="143" width="358" height="109"/>
+        <text class="m" x="346" y="157">pu_location_id</text><text class="mute" x="674" y="157" text-anchor="end">FK</text>
+        <text class="m" x="346" y="179">do_location_id</text><text class="mute" x="674" y="179" text-anchor="end">FK</text>
+        <text class="m" x="346" y="201">payment_type</text><text class="mute" x="674" y="201" text-anchor="end">FK</text>
+        <text class="m" x="346" y="223">ratecode_id</text><text class="mute" x="674" y="223" text-anchor="end">FK</text>
+        <text class="m" x="346" y="245">hvfhs_license_num</text><text class="mute" x="674" y="245" text-anchor="end">FK</text>
+        <line class="hair" x1="330" y1="252" x2="690" y2="252"/>
+
+        <text class="m" x="346" y="267">distance_miles · duration_sec · passenger_count</text>
+        <text class="m" x="346" y="289">base_fare · tip_amount · total_amount · driver_pay</text>
+        <text class="m" x="346" y="311">tolls · bcf · sales_tax · congestion · airport · cbd</text>
+        <text class="mute" x="674" y="267" text-anchor="end">measures</text>
+        <line class="hair" x1="330" y1="318" x2="690" y2="318"/>
+        <text class="m" x="346" y="333">dq_* flags (10 booleans, never null)</text>
+        <text class="m" x="346" y="355">kafka_* lineage · silver_write_ts · extras</text>
+
+        <!-- joins to dim_zone: the same dimension twice (pickup and dropoff roles) -->
+        <path class="edge" d="M330,153 H190" marker-end="url(#arrow)"/>
+        <path class="edge" d="M330,175 H190" marker-end="url(#arrow)"/>
+        <text class="lbl" x="260" y="146" text-anchor="middle">pickup · N:1</text>
+        <text class="lbl" x="260" y="192" text-anchor="middle">dropoff · N:1</text>
+
+        <!-- right-hand dimensions -->
+        <rect class="box" x="800" y="40" width="190" height="90" rx="4"/>
+        <text class="title" x="814" y="62">dim_payment_type</text>
+        <text class="mute" x="814" y="79">yellow, green · 7 rows</text>
+        <line class="hair" x1="800" y1="87" x2="990" y2="87"/>
+        <text class="m" x="814" y="105">payment_type</text><text class="mute" x="976" y="105" text-anchor="end">PK</text>
+        <text class="m" x="814" y="122">payment_label</text>
+
+        <rect class="box" x="800" y="150" width="190" height="90" rx="4"/>
+        <text class="title" x="814" y="172">dim_ratecode</text>
+        <text class="mute" x="814" y="189">yellow, green · 7 rows</text>
+        <line class="hair" x1="800" y1="197" x2="990" y2="197"/>
+        <text class="m" x="814" y="215">ratecode_id</text><text class="mute" x="976" y="215" text-anchor="end">PK</text>
+        <text class="m" x="814" y="232">ratecode_label</text>
+
+        <rect class="box" x="800" y="260" width="190" height="90" rx="4"/>
+        <text class="title" x="814" y="282">dim_hvfhs_company</text>
+        <text class="mute" x="814" y="299">fhvhv · 4 rows</text>
+        <line class="hair" x1="800" y1="307" x2="990" y2="307"/>
+        <text class="m" x="814" y="325">hvfhs_license_num</text><text class="mute" x="976" y="325" text-anchor="end">PK</text>
+        <text class="m" x="814" y="342">company</text>
+
+        <path class="edge" d="M690,201 H745 V85 H800" marker-end="url(#arrow)"/>
+        <path class="edge" d="M690,223 H770 V195 H800" marker-end="url(#arrow)"/>
+        <path class="edge" d="M690,245 H752 V305 H800" marker-end="url(#arrow)"/>
+      </svg>
+    </div>
+    <figcaption>Each arrow is a many-to-one join from a foreign-key row of the trip to the key of a dimension. Zones are the only dimension joined twice, once for the pickup and once for the dropoff. Payment type and rate code exist only for yellow and green trips, and the company only for HVFHV.</figcaption>
+  </figure>
+
+  <div class="cols">
+    <section>
+      <h2>Join keys</h2>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>Trip column</th><th>Dimension key</th><th>Services</th></tr></thead>
+          <tbody>
+            <tr><td><code>pu_location_id</code></td><td><code>dim_zone.location_id</code></td><td>all (about 85% of FHV trips have none)</td></tr>
+            <tr><td><code>do_location_id</code></td><td><code>dim_zone.location_id</code></td><td>all</td></tr>
+            <tr><td><code>payment_type</code></td><td><code>dim_payment_type.payment_type</code></td><td>yellow, green</td></tr>
+            <tr><td><code>ratecode_id</code></td><td><code>dim_ratecode.ratecode_id</code></td><td>yellow, green</td></tr>
+            <tr><td><code>hvfhs_license_num</code></td><td><code>dim_hvfhs_company.hvfhs_license_num</code></td><td>fhvhv</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>What this star does not have</h2>
+      <ul>
+        <li><strong>No date or time dimension.</strong> <code>pickup_date</code> and <code>pickup_hour</code> are columns of the fact, and every Gold mart groups by pickup hour.</li>
+        <li><strong>Labels are already in the fact.</strong> Silver carries the zone, borough and payment label, so most queries need no join. The dimensions keep the lookups in one place.</li>
+        <li><strong><code>service_type</code> is a degenerate dimension:</strong> a plain column and the partition key, with no table of its own.</li>
+        <li><strong>Bad keys are kept, not dropped.</strong> A zone that is missing or not in the lookup sets a <code>dq_*</code> flag and the trip stays in the fact.</li>
+      </ul>
+    </section>
+  </div>
+
+  <section>
+    <h2>Which dimensions each Gold mart groups by</h2>
+    <div class="tbl">
+      <table>
+        <thead><tr><th>Gold mart</th><th>Keys besides the pickup hour</th></tr></thead>
+        <tbody>
+          <tr><td><code>trips_daily</code>, <code>trip_efficiency_daily</code>, <code>data_quality_daily</code></td><td>service type</td></tr>
+          <tr><td><code>demand_hourly</code></td><td>service type, day of week</td></tr>
+          <tr><td><code>zone_od_daily</code></td><td>service type, pickup zone, dropoff zone</td></tr>
+          <tr><td><code>revenue_daily</code></td><td>service type, pickup zone and borough, payment type</td></tr>
+          <tr><td><code>hvfhv_economics_daily</code>, <code>hvfhv_service_daily</code></td><td>company (license number)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+</body>
+</html>
