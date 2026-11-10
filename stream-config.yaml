@@ -180,6 +180,33 @@ batch:
   shuffle_partitions: 16
 
 # ---------------------------------------------------------------------------
+# Spark ML on the batch store (consumed by M6: spark/ml_job.py). The same seed gives the same metrics.
+# ---------------------------------------------------------------------------
+ml:
+  batch_dir: /output/batch                  # reads silver/trips and gold/*; writes silver/ml_features and gold/ml_*
+  seed: 42
+  sample_rows: 300000                       # trip-level models: at most this many clean trips per service (5000000 on a big machine)
+  test_percent: 20                          # share of rows held out for scoring (chosen by a hash of the row key)
+  cv_folds: 3                               # cross-validation folds on the training part; 0 skips cross-validation
+  gbt_iterations: 30                        # trees of the GBT models
+  gbt_max_depth: 5
+  max_bins: 64                              # split candidates per feature (zone IDs need more than the default 32)
+  forest_trees: 30                          # trees of the tip classifier
+  zone_clusters: 5                          # KMeans k for zone segmentation
+  demand_pattern_clusters: 3                # KMeans k for daily demand shapes
+  min_zone_trips: 500                       # zones with fewer trips are not clustered
+  anomaly_quantile: 0.99                    # flag when |fare residual| is above this quantile of the training residuals
+  anomaly_inject_percent: 5                 # share of holdout trips corrupted to measure recall and precision
+  shuffle_partitions: 16
+  holidays: [                               # US federal holidays; the TLC files carry none. Extend for other years.
+    "2024-01-01", "2024-01-15", "2024-02-19", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-10-14",
+    "2024-11-11", "2024-11-28", "2024-12-25",
+    "2025-01-01", "2025-01-20", "2025-02-17", "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01", "2025-10-13",
+    "2025-11-11", "2025-11-27", "2025-12-25",
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-05-25", "2026-06-19", "2026-07-04", "2026-09-07", "2026-10-12",
+    "2026-11-11", "2026-11-26", "2026-12-25"]
+
+# ---------------------------------------------------------------------------
 # Query-time combination of the stream and batch Gold marts (D28; scripts/combined_views.py)
 # ---------------------------------------------------------------------------
 combined:

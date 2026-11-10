@@ -47,6 +47,7 @@ def load_config(env=os.environ):
         "norms": ds["normalize"],
         "proc": proc,
         "batch": cfg.get("batch", {}),
+        "ml": cfg.get("ml", {}),
         "trigger_mode": env.get("TRIGGER_MODE") or proc.get("trigger_mode", "processing_time"),
         "zone_lookup": env.get("ZONE_LOOKUP") or proc["zone_lookup"],
         "output_dir": env.get("OUTPUT_DIR") or proc["output_dir"],

@@ -12,7 +12,7 @@ This project has two goals: **stream processing** of taxi trips through Kafka an
 | 3 | Spark: parse, validate, enrich | 🚧 built and tested locally on file input; Kafka source not run |
 | 4 | Silver conformance and stream Gold (daily KPI marts) | 🚧 built and tested locally on file input; Kafka source not run |
 | 5 | Batch processing of historic data (Silver, monthly Gold, query benchmark) | 🚧 built and verified on 3 real months; full 24-month run not done |
-| 6 | Spark ML on the historic data | ⬜ |
+| 6 | Spark ML on the historic data | 🚧 built and verified on 2 real months; full-range run not done |
 | 7 | End-to-end with Compose | ⬜ |
 | 8 | Hardening and docs | ⬜ |
 
@@ -278,7 +278,7 @@ python scripts/reconcile.py
 
 ---
 
-## Chapter 6 — Spark ML on the historic data ⬜
+## Chapter 6 — Spark ML on the historic data 🚧
 
 **The story.** History is also training data. With two years of Silver and Gold we can ask what will happen: how many trips each zone will see next hour, what a trip should cost, how long it will take, whether it will be tipped, and which trips look wrong. The KPI catalog lists the models and the metrics that show whether they are any good, and whether they stay good.
 
@@ -294,6 +294,8 @@ python scripts/reconcile.py
 - A test shows no excluded column is in any feature list.
 - Lift over the baseline ("same hour last week") is reported for each model.
 - The same seed gives the same metrics.
+
+**What was found.** Measured on 2025-12 and 2026-01 (yellow, green and FHV in full, and the first 400,000 HVFHV trips of 2026-01; 300,000-trip sample per service): demand WAPE 0.239 (baseline 0.409), fare MAE $3.99 (linear baseline $5.59), duration MAE 4.2 min (baseline 5.9), tip AUC 0.646, wait MAE 178 s (baseline 182, lift 2%), shared match AUC 0.682, zone clusters silhouette 0.47 (stability ARI 0.67), demand-pattern silhouette 0.60, anomaly recall 0.86 and precision 0.81 at 1.05% flagged, PCA 11 of 14 components for 90%. Targets met: M1, M7 and M8 (silhouette), M9, O1, O3; missed: M2 to M6, M7 stability and M10. The first runs showed two things that changed the code: a file holds a few trips just outside its month (so "month" in the ML tables is the source-file month), and a few trips have impossible distances or fares (so models train only on trips up to 100 miles, $500 and 180 minutes).
 
 **Known limits:** the TLC files have no weather or holidays (holidays can be added as a small table), no driver or passenger IDs (so no recommendation models), and FHV has no fares. Spark ML has no ARIMA or Prophet, so forecasting uses lag features with tree or linear models.
 
@@ -340,6 +342,7 @@ Late and out-of-order data to show the watermark at work (already partly built i
 
 | Date | Change |
 |---|---|
+| 2026-11-10 | M6 built: `spark/ml_features.py` (`silver.ml_features`: zone-hour lags and a deterministic trip sample), `spark/ml_job.py` (demand, fare, duration, tip, wait, shared match, zone and demand-pattern clustering, anomalies, PCA, and the metrics table), `scripts/evaluate_models.py`, `spark-ml` service, `tests/test_ml.py`. Verified on real 2025-12 and 2026-01 data. Measured on 2025-12 and 2026-01 (yellow, green and FHV in full, and the first 400,000 HVFHV trips of 2026-01; 300,000-trip sample per service): demand WAPE 0.239 (baseline 0.409), fare MAE $3.99 (linear baseline $5.59), duration MAE 4.2 min (baseline 5.9), tip AUC 0.646, wait MAE 178 s (baseline 182, lift 2%), shared match AUC 0.682, zone clusters silhouette 0.47 (stability ARI 0.67), demand-pattern silhouette 0.60, anomaly recall 0.86 and precision 0.81 at 1.05% flagged, PCA 11 of 14 components for 90%. Targets met: M1, M7 and M8 (silhouette), M9, O1, O3; missed: M2 to M6, M7 stability and M10. Added D32. |
 | 2026-11-10 | M5 built: batch job, monthly and health marts, KPI queries, combined views, benchmark, `reconcile --batch`, stream-vs-batch comparison, `spark-batch` service. Verified on synthetic files and real 2024-12, 2025-12 and 2026-01 data; stream and batch marts match exactly. Found that Silver is much larger than estimated (storage doc revised). Added D31. |
 | 2026-11-09 | M4 built: Silver conformance (typed columns, `trip_id`, `dq_*` flags, dimensions), deduplication, the eight stream Gold marts, reworked `reconcile.py` and `show_results.py`, new `evaluate_stream.py`, `specs/silver-schema.md` and `specs/gold-schema.md`. 70 tests pass. Verified on file input only (no Kafka, no Docker). Added D29 and D30; D27 implemented. |
 | 2026-11-05 | Stream and batch kept in separate stores and combined only at query time with a cutover date (D28, option A). Batch range is now 2024-01 to 2025-12. The live-against-baseline KPI stays, as a query over the combined views. |

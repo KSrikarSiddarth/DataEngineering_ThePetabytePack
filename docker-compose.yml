@@ -141,6 +141,26 @@ services:
       - ./producer/datasets.yaml:/config/datasets.yaml:ro
     restart: "no"
 
+  # M6: trains and scores the Spark ML models on the batch store (run spark-batch first); needs no Kafka.
+  #   docker compose --profile ml up spark-ml
+  spark-ml:
+    build:
+      context: ./spark
+    container_name: spark-ml
+    profiles: ["ml"]
+    command: ["python", "-u", "ml_job.py"]
+    environment:
+      CONFIG_PATH: /config/stream-config.yaml
+      DATASETS_PATH: /config/datasets.yaml
+      SPARK_MASTER: ${ML_SPARK_MASTER:-local[2]}
+      SPARK_DRIVER_MEMORY: ${ML_DRIVER_MEMORY:-4g}
+    volumes:
+      - ./data:/data:ro
+      - ./output:/output
+      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ./producer/datasets.yaml:/config/datasets.yaml:ro
+    restart: "no"
+
   producer-yellow:
     <<: *producer
     environment:

@@ -2,7 +2,7 @@
 
 Commands are for PowerShell from the project root. Steps 2 onward need Docker Desktop (see `installation.md`).
 
-**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 10.
+**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 11.
 
 ## 1. One-time setup
 
@@ -210,10 +210,26 @@ Remove-Item -Recurse -Force output\check
 
 Run the producers with `QUALITY_PROFILE=clean` and the same `MAX_RECORDS` first. Every stream row (only closed hours exist) must equal the batch row with the same keys. With faults injected, or trips dropped as too late by the watermark, the two differ on purpose.
 
-## 9. Tests, stop and reset
+## 9. Spark ML on the historic data (M6)
+
+The ML job needs no Kafka. It reads the batch store from Section 8 (`output/batch/silver/trips` and the gold marts) and writes `output/batch/silver/ml_features` and `output/batch/gold/ml_*`. Run the batch job first, for at least two months so the lag features (168 hours back) and the month-to-month checks have data.
 
 ```powershell
-python -m pytest tests -q              # 80 tests, ~12 minutes on a 2-core machine (the Spark tests start a local Spark)
+# In Docker
+docker compose --profile ml up --build spark-ml
+
+# Or on the host (same setup as Section 8; SPARK_HOME must point at pip's pyspark)
+python spark\ml_job.py --batch-dir output\batch
+python spark\ml_job.py --batch-dir output\batch --models fare anomaly     # a subset (anomaly needs fare)
+python scripts\evaluate_models.py --batch-dir output\batch              # the latest run against evaluation.md
+```
+
+Settings are in the `ml:` section of `stream-config.yaml`: `sample_rows` (trips per service for the trip-level models, 300,000 by default; 5,000,000 on a big machine), `test_percent`, `cv_folds` (0 skips cross-validation), the tree settings, the cluster counts, the anomaly settings and the holiday list. The same `seed` gives the same metrics. On the 2-core dev machine two months with the defaults take about 25 minutes. `ml_model_metrics` is appended to on every run, so the training time can be followed as the data grows.
+
+## 10. Tests, stop and reset
+
+```powershell
+python -m pytest tests -q              # 89 tests, ~16 minutes on a 2-core machine (the Spark tests start a local Spark)
 python -m pytest tests -q -k "not spark and not real_data"    # fast subset (a few seconds)
 
 docker compose stop                    # stop everything, keep data
@@ -228,7 +244,7 @@ docker compose --profile ui --profile producers --profile spark down -v
 Remove-Item -Recurse -Force output
 ```
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
@@ -239,13 +255,12 @@ Remove-Item -Recurse -Force output
 | Producer is slow | `REPLAY_SPEEDUP` is paced on purpose. Use `$env:REPLAY_SPEEDUP="0"` for full speed. HVFHV also takes a while to sort at start-up. |
 | `spark-job` build fails on `curl` | The Maven Central download needs internet. Check proxy and firewall. |
 | `batch_job.py`: a file is `failed` with `not found` | The month is not in `data/`. Run `python scripts/download_data.py --months <month>`. |
-| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 9). |
+| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 10). |
 | Spark tests fail with `legacyInferArrayTypeFromFirstElement` | A machine-wide `SPARK_HOME` overrides PySpark. See `installation.md`. |
 | `FileNotFoundError` on a file that exists | Windows path longer than 260 characters. Use a shorter folder. |
 | Docker Desktop will not start on an Azure VM | B-series sizes cannot run nested virtualization. See `installation.md`. |
 
-## 11. Not built yet
+## 12. Not built yet
 
-- **Spark ML (M6):** the `spark-ml` job and the model metrics.
 - The single-command `docker compose up --build` for the whole pipeline (M7) and the restart test (M8). Until M7, start the services in the order above.
-- Commands for M6 will be added here when it is built. Sections 5 to 7 describe the M4 stream (Silver and Gold) and Section 8 the M5 batch path. The Kafka path in Sections 2 to 5 and the Docker service in Section 8 are written but not run on a machine with Docker yet; the host commands (Sections 7 and 8) are verified.
+- Sections 5 to 7 describe the M4 stream (Silver and Gold), Section 8 the M5 batch path and Section 9 the M6 models. The Kafka path in Sections 2 to 5 and the Docker services in Sections 8 and 9 are written but not run on a machine with Docker yet; the host commands (Sections 7 to 9) are verified.

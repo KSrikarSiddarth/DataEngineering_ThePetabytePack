@@ -458,6 +458,21 @@ Confirmed by the project owner on 2026-11-10, with the window set to 2 minutes (
 
 ---
 
+## D32 — Spark ML: hash-based holdout, deterministic sample, anomalies scored by injection 🟡
+
+**Choice:** (1) Every supervised model is scored on a holdout of `ml.test_percent` (20%) of its rows, chosen by a hash of the row key (`trip_id`, or zone and hour) and the seed, not by time. The error per month (O3) is the holdout error grouped by month. (2) Trip-level models train on a sample of at most `ml.sample_rows` clean trips per service, kept by a hash of `trip_id`. A clean trip has no `dq_*` flag. (3) Anomaly detection flags trips whose fare residual is above the 99th percentile of the training residuals. Because the data has no ground truth, recall and precision are measured on injected bad trips: 5% of the holdout gets a fare x10 or a distance x10. (4) The demand forecast reads the gold `zone_od_daily` mart, not Silver, and the lag features come from a join on the hour, not from row offsets.
+
+**Why:** (1) The same seed always gives the same split and the same metrics (acceptance test 4, O2), whatever the partitioning, and every loaded month is represented in the holdout, so the error per month is measurable even with three months of data. (2) A hash filter is repeatable; `LIMIT` or a random sample is not. Flagged rows are the rows the KPIs call bad, so they are left out of training. (3) The catalog's "share of flagged trips confirmed as bad" needs known bad trips. (4) The mart is small and already filtered by `dq_pickup_out_of_range`. A join on the hour stays correct when days or hours are missing; row offsets would silently look back too far.
+
+**Alternatives**
+- *Temporal split (train on early months, test on the last):* the honest test of forecasting, and the right choice once 24 months are loaded. With 3 months it leaves one month for testing and none for the drift check. It can be added as a config option.
+- *Spark `CrossValidator`:* does not expose the metric of each fold, which the cross-validation spread needs. Folds are done by hand with a second hash.
+- *Isolation-forest style anomaly detection:* not in Spark ML; residuals and KMeans distance are what the catalog lists.
+
+**Trade-offs:** a random split lets the model see hours next to the ones it is scored on (the lag features of a test hour can come from a training hour's label), so the demand error is somewhat optimistic compared with a temporal split. Injected anomalies are a synthetic test, so the recall and precision say how well the detector finds large errors, not how many real errors exist.
+
+---
+
 ---
 
 ## D28 — Combine stream and batch at query time only ✅
@@ -497,6 +512,7 @@ Confirmed by the project owner on 2026-11-10, with the window set to 2 minutes (
 
 | Date | Change |
 |---|---|
+| 2026-11-10 | M6 built. Added D32 (hash-based holdout, deterministic sample, anomalies scored by injection).
 | 2026-11-10 | M5 built. Added D31 (batch partitions by source-file month; monthly marts additive).
 | 2026-11-10 | D27, D29 and D30 confirmed. The deduplication window (D30) changed from 5 to 2 minutes to reduce state memory. |
 | 2026-11-09 | M4 built. D27 implemented. Added D29 (Gold marts as hourly additive measures) and D30 (deduplication watermark on Kafka ingest time). |

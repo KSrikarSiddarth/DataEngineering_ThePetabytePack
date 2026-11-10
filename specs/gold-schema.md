@@ -47,6 +47,25 @@ Growth, rolling averages, seasonality, shares, card-versus-cash trends and the f
 
 **`batch_run_metrics`** (replaced at the end of every run) has one row per `silver/batch_run_log` row: `run_id`, `source_file`, `dataset`, `source_month`, `status`, the row counts, `reconciliation_diff` (`silver_rows + duplicates_removed + invalid_rows - bronze_rows`, should be 0), `freshness_lag_days` (Gold availability minus TLC publication date), `columns_added` and `columns_removed` against the dataset's previous file, `runtime_sec`, `rows_per_sec`, and `months_expected` (the months in the configured range). `batch_health.sql` turns it into the success rate, backfill completeness and the other KPIs.
 
+## Spark ML tables (M6)
+
+Written by `spark/ml_job.py` to `output/batch/gold/ml_*`, replaced on every run except the metrics table. Predictions are for the **holdout** rows only (`ml.test_percent`, chosen by a hash of the row key), so they are honest out-of-sample values. `ym` is the month (`YYYY-MM`).
+
+| Table | Columns |
+|---|---|
+| `ml_demand_forecast` | `pu_location_id`, `hour_start`, `ym`, `trips`, `prediction`, `baseline` (same hour last week), `error` |
+| `ml_fare_predictions` | `trip_id`, `ym`, `base_fare`, `prediction`, `baseline` (linear fit on distance), `error` |
+| `ml_duration_predictions` | `trip_id`, `ym`, `duration_min`, `prediction`, `baseline` (mean per zone pair and hour), `error` |
+| `ml_tip_predictions` | `trip_id`, `ym`, `tip20`, `prediction` (probability of a tip of 20% or more), `baseline` (the positive rate), `error` |
+| `ml_wait_predictions` | `trip_id`, `ym`, `wait_sec`, `prediction`, `baseline` (mean per zone and hour), `error` |
+| `ml_shared_match_predictions` | `trip_id`, `ym`, `shared_match`, `prediction` (probability of a match), `baseline`, `error` |
+| `ml_zone_clusters` | `pu_location_id`, `cluster`, `avg_distance`, `avg_fare` (zones with at least `ml.min_zone_trips` trips) |
+| `ml_demand_pattern_clusters` | `pickup_date`, `day_of_week`, `cluster` (complete days only) |
+| `ml_trip_anomalies` | Real holdout trips flagged by the fare residual: `trip_id`, `service_type`, `pickup_ts`, `distance_miles`, `base_fare`, `predicted_fare`, `residual`, `speed_mph` |
+| `ml_model_metrics` | `run_id`, `run_ts`, `model`, `metric`, `scope`, `value`. **Appended** on every run |
+
+`ml_model_metrics` scopes: `test` (holdout metrics: `mae`, `rmse`, `wape`, `r2`, `within_10pct`, or `auc`, `accuracy`, `precision`, `recall`, `f1`, `lift`, and for clusters `silhouette` and `stability_ari`, for anomalies `recall`, `precision`, `flagged_rate`, for PCA `n_features`, `components_for_90pct`, `variance_at_half`), `baseline` (the same metrics of the simple rule), `cv` (`cv_mean`, `cv_std` of the primary metric over the cross-validation folds), `month:YYYY-MM` (the primary metric on that month's holdout rows), `drift` (`metric` = feature name; |mean in the last month - mean in the first month| / std in the first month; absent for one month) and `train` (`train_seconds`). `lift` = (baseline error - model error) / baseline error, with error = 1 - AUC for classifiers. `scripts/evaluate_models.py` prints the latest run against `evaluation.md`.
+
 ## Behaviour to know
 
 - A window is written only after the watermark passes it, so the last hour(s) of a finite run are not written until later data arrives.

@@ -1,6 +1,6 @@
 # evaluation.md — Final Evaluation Targets
 
-Numerical targets for streaming latency and model accuracy. **Status: proposed.** Nothing here has been measured: no Kafka or Docker run has happened yet, and no model has been trained. The numbers come from the plan's settings and from general experience with NYC taxi data. They are a first draft to confirm, then set for good after the first real run, so that they are neither trivial nor impossible.
+Numerical targets for streaming latency and model accuracy. **Status: proposed.** The streaming targets are not measured (no Kafka or Docker run yet). The model targets were measured once, on 2 real months (section 6); they are still proposals. The numbers come from the plan's settings and from general experience with NYC taxi data. They are a first draft to confirm, then set for good after the first real run, so that they are neither trivial nor impossible.
 
 Related: `PLAN.md` (milestones M4, M6, M8), `specs/3_KPI.html` (model KPIs), `decisions.md`.
 
@@ -84,8 +84,30 @@ Both scripts are written in the milestone that produces the data (M4 for streami
 | E3 | After the first Docker run, replace S1 to S4 with values based on measurement. After the first model run, replace the absolute figures in M2 to M6. |
 | E4 | Whether the streaming targets should also include a lighter reference load for development machines. |
 
+## 6. First model run (2026-11-10)
+
+2025-12 and 2026-01, 300,000-trip sample per service, first 400,000 HVFHV trips of 2026-01, random 20% holdout (D32). `scripts/evaluate_models.py` output:
+
+| # | Measured | Target | Status |
+|---|---|---|---|
+| M1 demand | WAPE 0.239, lift +41% | WAPE <= 0.25, lift >= 10% | met |
+| M2 fare | MAE $3.99, R² 0.80 | MAE <= $2.50, R² >= 0.90 | missed |
+| M3 duration | MAE 4.2 min, 26% within ±10% | MAE <= 4, >= 50% | missed |
+| M4 tip | AUC 0.646 | >= 0.70 | missed |
+| M5 wait | MAE 178 s, lift +2% | <= 150 s, lift >= 10% | missed |
+| M6 shared match | AUC 0.682 | >= 0.70 | missed |
+| M7 zones | silhouette 0.47, stability ARI 0.67 | >= 0.25, >= 0.8 | silhouette met, stability missed |
+| M8 patterns | silhouette 0.60 | >= 0.25 | met |
+| M9 anomalies | recall 0.86, precision 0.81, flagged 1.05% | >= 80%, 0.5% to 2% | met |
+| M10 PCA | 68.7% with half the features (11 of 14 components for 90%) | >= 90% with half | missed |
+| O1 | 0.2% to 1.8% | <= 5% | met |
+| O3 | demand +8%, others lower | <= 15% worse | met |
+
+Every supervised model beats its baseline. The wait-time model barely does (+2%): pickup zone, hour and company carry little signal. The tip and shared-match targets were flagged above as the least certain. Per E3, the absolute figures should be revisited after a run on the full range; a temporal split would make the demand and drift figures stricter.
+
 ## Change log
 
 | Date | Change |
 |---|---|
 | 2026-11-05 | Created with proposed targets. |
+| 2026-11-10 | Added section 6: first model run on 2 real months. |
