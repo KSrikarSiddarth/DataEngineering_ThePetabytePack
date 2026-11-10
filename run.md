@@ -2,7 +2,7 @@
 
 Commands are for PowerShell from the project root. Steps 2 onward need Docker Desktop (see `installation.md`).
 
-**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 11.
+**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 12.
 
 ## 1. One-time setup
 
@@ -226,10 +226,23 @@ python scripts\evaluate_models.py --batch-dir output\batch              # the la
 
 Settings are in the `ml:` section of `stream-config.yaml`: `sample_rows` (trips per service for the trip-level models, 300,000 by default; 5,000,000 on a big machine), `test_percent`, `cv_folds` (0 skips cross-validation), the tree settings, the cluster counts, the anomaly settings and the holiday list. The same `seed` gives the same metrics. On the 2-core dev machine two months with the defaults take about 25 minutes. `ml_model_metrics` is appended to on every run, so the training time can be followed as the data grows.
 
-## 10. Tests, stop and reset
+## 10. Dashboard
+
+A Streamlit app over the Gold marts and the ML results. It reads the Parquet files in place through DuckDB, so it needs no Docker and no extra service, and it shows whatever exists: a page without data says what to run.
 
 ```powershell
-python -m pytest tests -q              # 89 tests, ~16 minutes on a 2-core machine (the Spark tests start a local Spark)
+pip install -r requirements-dev.txt                    # streamlit and pandas are included
+streamlit run dashboard/app.py                         # opens http://localhost:8501
+streamlit run dashboard/app.py --server.address localhost    # keep it off the network
+$env:DASHBOARD_OUTPUT="output\ml_dev"; streamlit run dashboard/app.py   # another output folder (it must contain batch\)
+```
+
+The sidebar sets the output folder and the cutover date, and has a **Reload data** button (use it after a new batch, stream or ML run). Pages: Trends, Revenue, Efficiency, Zones, HVFHV, Quality and health (the slowest file loads are listed first), Live vs baseline (needs the stream output and a batch range that ends before the cutover), and ML models (targets, lift, error by month, predicted against actual, clusters, flagged trips).
+
+## 11. Tests, stop and reset
+
+```powershell
+python -m pytest tests -q              # 98 tests, ~16 minutes on a 2-core machine (the Spark tests start a local Spark)
 python -m pytest tests -q -k "not spark and not real_data"    # fast subset (a few seconds)
 
 docker compose stop                    # stop everything, keep data
@@ -244,7 +257,7 @@ docker compose --profile ui --profile producers --profile spark down -v
 Remove-Item -Recurse -Force output
 ```
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
@@ -255,12 +268,12 @@ Remove-Item -Recurse -Force output
 | Producer is slow | `REPLAY_SPEEDUP` is paced on purpose. Use `$env:REPLAY_SPEEDUP="0"` for full speed. HVFHV also takes a while to sort at start-up. |
 | `spark-job` build fails on `curl` | The Maven Central download needs internet. Check proxy and firewall. |
 | `batch_job.py`: a file is `failed` with `not found` | The month is not in `data/`. Run `python scripts/download_data.py --months <month>`. |
-| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 10). |
+| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 11). |
 | Spark tests fail with `legacyInferArrayTypeFromFirstElement` | A machine-wide `SPARK_HOME` overrides PySpark. See `installation.md`. |
 | `FileNotFoundError` on a file that exists | Windows path longer than 260 characters. Use a shorter folder. |
 | Docker Desktop will not start on an Azure VM | B-series sizes cannot run nested virtualization. See `installation.md`. |
 
-## 12. Not built yet
+## 13. Not built yet
 
 - The single-command `docker compose up --build` for the whole pipeline (M7) and the restart test (M8). Until M7, start the services in the order above.
-- Sections 5 to 7 describe the M4 stream (Silver and Gold), Section 8 the M5 batch path and Section 9 the M6 models. The Kafka path in Sections 2 to 5 and the Docker services in Sections 8 and 9 are written but not run on a machine with Docker yet; the host commands (Sections 7 to 9) are verified.
+- Sections 5 to 7 describe the M4 stream (Silver and Gold), Section 8 the M5 batch path and Section 9 the M6 models and Section 10 the dashboard. The Kafka path in Sections 2 to 5 and the Docker services in Sections 8 and 9 are written but not run on a machine with Docker yet; the host commands (Sections 7 to 9) are verified.

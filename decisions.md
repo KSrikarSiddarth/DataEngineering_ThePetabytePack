@@ -495,6 +495,20 @@ Confirmed by the project owner on 2026-11-10, with the window set to 2 minutes (
 
 ---
 
+## D33 — Streamlit dashboard over DuckDB 🟡
+
+**Choice:** The dashboard is one Streamlit app (`dashboard/app.py`) that reads the Parquet files through DuckDB, using the views of `scripts/combined_views.py` and running the SQL files of `scripts/queries/` unchanged. Pages: Trends, Revenue, Efficiency, Zones, HVFHV, Quality and health, Live vs baseline, ML models. It runs on the host (`streamlit run dashboard/app.py`), not in Compose.
+
+**Why:** The data is files, not a live database, and the KPI formulas already live in SQL. Streamlit needs no extra service and no Docker (this machine has none), reuses the SQL, and can show the ML results (predicted against actual, clusters, flagged trips) that a BI tool handles badly.
+
+**Alternatives**
+- *Grafana:* better for a live, auto-refreshing stream view and alerts, but it needs a service and a database or plugin it can query (Postgres, ClickHouse). Worth adding later for the stream KPIs (Q4).
+- *Superset or Metabase:* the same service and database cost, with less control over the ML pages.
+
+**Trade-offs:** It is not a monitoring tool: no alerts, and data is refreshed with the Reload button, not live. It needs `streamlit` and `pandas` on the host (`requirements-dev.txt`). Streamlit binds all network interfaces by default; use `--server.address localhost` to keep it local.
+
+---
+
 ## Open Questions
 
 | # | Question | Needed by |
@@ -502,7 +516,7 @@ Confirmed by the project owner on 2026-11-10, with the window set to 2 minutes (
 | Q1 | Confirm D6 to D12 and D14 to D15, or choose alternatives | Before M1 |
 | Q2 | HVFHV cap size: measure throughput first, then fix the number | M2 |
 | Q3 | ~~How many months to replay~~ Resolved: stream replays 2026-01; batch uses 24 months (D25, to confirm) | M2 / M5 |
-| Q4 | Whether a dashboard or SQL serving layer is wanted (D12 extension) | After M7 |
+| Q4 | ~~Whether a dashboard is wanted~~ Streamlit dashboard built (D33). Still open: a SQL serving layer or Grafana for the live stream | After M7 |
 | Q5 | Confirm D24 and D25 design: 24 months, 12, or 49; DuckDB + Spark SQL only | Before M5 |
 | Q6 | Confirm D26 (medallion layout, stream builds daily marts). D27 is confirmed (2026-11-10). | Before M5 |
 | Q7 | Spec details: the `fhvhv` vs `hvfhv` service value, and the extra Silver columns the KPIs need (`PLAN.md` §6.7 gaps) | Before M4 |
@@ -512,6 +526,7 @@ Confirmed by the project owner on 2026-11-10, with the window set to 2 minutes (
 
 | Date | Change |
 |---|---|
+| 2026-11-10 | Streamlit dashboard added (D33); Q4 partly resolved.
 | 2026-11-10 | M6 built. Added D32 (hash-based holdout, deterministic sample, anomalies scored by injection).
 | 2026-11-10 | M5 built. Added D31 (batch partitions by source-file month; monthly marts additive).
 | 2026-11-10 | D27, D29 and D30 confirmed. The deduplication window (D30) changed from 5 to 2 minutes to reduce state memory. |

@@ -51,13 +51,9 @@ def month_drift(metrics, model):
     return first, last, (last - first) / first if first else 0.0
 
 
-def main():
-    """Print the evaluation table; return 1 when any measured target fails."""
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--batch-dir", default="output/batch")
-    metrics, run = latest_metrics(ap.parse_args().batch_dir)
-    print(f"run {run}")
-
+def evaluate(metrics):
+    """[(target name, measured value as text, True/False/None)] for every target of `metrics` (None = not measured):
+    the M targets, then O1 and O3 per model."""
     results = []
     for tid, model, metric, op, target in TARGETS:
         v = metrics.get((model, metric, "test"))
@@ -73,6 +69,18 @@ def main():
         if drift:
             results.append((f"O3 {model} error drift <= {O3_MAX_DRIFT:.0%}", f"{drift[2]:+.1%} ({drift[0]:.4f} -> {drift[1]:.4f})",
                             drift[2] <= O3_MAX_DRIFT))
+    return results
+
+
+def main():
+    """Print the evaluation table; return 1 when any measured target fails."""
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--batch-dir", default="output/batch")
+    metrics, run = latest_metrics(ap.parse_args().batch_dir)
+    print(f"run {run}")
+
+    models = sorted({m for m, _, _ in metrics})
+    results = evaluate(metrics)
     for name, value, ok in results:
         print(f"{'n/a ' if ok is None else 'PASS' if ok else 'FAIL'}  {name:46} measured {value}")
 

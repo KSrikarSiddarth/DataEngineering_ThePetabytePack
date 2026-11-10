@@ -25,7 +25,7 @@ The data is organized in **Bronze, Silver and Gold layers** (`specs/2_nyc_taxi_m
 - Single-command startup, health checks, README with run instructions.
 
 **Out of scope (initially)**
-- Cloud deployment, multi-broker clusters, schema registry, auth, dashboards (stretch goal only).
+- Cloud deployment, multi-broker clusters, schema registry, auth. (A Streamlit dashboard over the Gold and ML results was added after M6; D33. A live Grafana view of the stream stays a stretch goal.)
 
 ## 3. Existing Inputs (in `data/`; fetch the trip files with `python scripts/download_data.py`)
 
@@ -304,6 +304,9 @@ Two parts. Both follow `specs/2_nyc_taxi_medallion_architecture.html` and `specs
   2. A test checks that no excluded post-trip column is in any model's feature list.
   3. Each model's lift over the baseline (for example "same hour last week") is reported, positive or not.
   4. Training is repeatable: the same seed gives the same metrics.
+
+### Dashboard (added after M6, built 2026-11-10; D33)
+`dashboard/app.py` is a Streamlit app over DuckDB: it reads the batch and stream Gold Parquet through the views of `scripts/combined_views.py` and runs `scripts/queries/*.sql` unchanged. Pages: Trends, Revenue, Efficiency, Zones, HVFHV, Quality and health (including the slowest file loads), Live vs baseline, and ML models (targets, lift, error by month, predicted against actual, clusters, flagged trips). Run with `streamlit run dashboard/app.py`. Verified on the real 2025-12 and 2026-01 batch store and by `tests/test_dashboard.py`; the Live page needs a stream run. Not in Compose.
 
 ### M7 — End-to-end with Compose
 - Add `spark-job` and `producer` services with `depends_on` (healthy/completed conditions), and a documented way to run the batch backfill and ML alongside (`docker compose --profile batch up spark-batch`, `--profile ml up spark-ml`).
