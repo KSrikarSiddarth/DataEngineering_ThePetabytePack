@@ -33,9 +33,10 @@ Every significant choice in this project, the alternatives considered, and why w
 | D25 | Historical store and query engines | Partitioned Parquet, 24 months, DuckDB + Spark SQL | 🟡 |
 | D26 | Data layers | Bronze (not copied), Silver, Gold; stream builds daily marts, batch builds the rest | 🟡 |
 | D28 | Stream and batch results | Separate stores; stream never merged into the historic store; combined only at query time with a cutover date | ✅ |
-| D27 | Validation policy v2 | Flag KPI-relevant violations in Silver, reject only unusable rows (replaces D22; implemented in M4, awaiting your confirmation) | 🟡 |
-| D29 | Gold mart shape | Hourly grain, additive measures only; daily and ratios computed at query time | 🟡 |
-| D30 | Silver deduplication | `dropDuplicatesWithinWatermark` on `trip_id`, with the watermark on Kafka ingest time | 🟡 |
+| D27 | Validation policy v2 | Flag KPI-relevant violations in Silver, reject only unusable rows (replaces D22; implemented in M4) | ✅ |
+| D29 | Gold mart shape | Hourly grain, additive measures only; daily and ratios computed at query time | ✅ |
+| D31 | Batch layout and monthly marts | Partition by source-file month; monthly marts hold additive sums and trend KPIs are computed by queries | 🟡 |
+| D30 | Silver deduplication | `dropDuplicatesWithinWatermark` on `trip_id`, with the watermark (2 minutes) on Kafka ingest time | ✅ |
 
 ---
 
@@ -374,7 +375,9 @@ Every significant choice in this project, the alternatives considered, and why w
 - *12 months:* the original proposal; about half the disk, but several catalog KPIs could not be computed.
 - *49 months (2022-01 to 2026-01):* also covers the 2022 Airport fee comparison, but roughly doubles disk again (about 80 GB) and the batch run time.
 
-**Open:** disk (about 40–50 GB for 24 months, see `storage_requirements.md`) and how long HVFHV takes in local mode; confirm after measuring.
+**Current setting (2026-11-10):** the range in `stream-config.yaml` is set to 3 months (2025-10 to 2025-12) for development; year-over-year, the rolling 12-month average and seasonality then report "not enough history". Set `batch.start_month` back to 2024-01 for the 24-month default.
+
+**Open:** disk and time. Measured on 2 real months of Yellow, Green and FHV: Silver is 56–69 bytes per row, so 24 months with HVFHV is about 72–85 GB (about 55–60 GB with zstd and a 16-character `trip_id`), and the run speed of about 1.2M rows per minute on a 2-core VM means roughly 9 hours (see `storage_requirements.md`). Decide whether to cut months, apply the reductions, or skip HVFHV for older months.
 
 ---
 
@@ -397,9 +400,9 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ---
 
-## D27 — Flag, don't reject, rule violations that the KPIs measure 🟡
+## D27 — Flag, don't reject, rule violations that the KPIs measure ✅
 
-**Choice:** Keep trips with dropoff before pickup, zero or negative distance, negative fare, unmatched zones, and pickup times outside the file's month in `silver.trips`, with a `dq_*` flag. Only rows that cannot be used at all (malformed JSON, null pickup time) go to `silver_invalid`. Gold marts filter on the flags (for example, the efficiency marts exclude rows with `dq_dropoff_before_pickup`). **This replaces D22 if accepted.**
+**Choice:** Keep trips with dropoff before pickup, zero or negative distance, negative fare, unmatched zones, and pickup times outside the file's month in `silver.trips`, with a `dq_*` flag. Only rows that cannot be used at all (malformed JSON, null pickup time) go to `silver_invalid`. Gold marts filter on the flags (for example, the efficiency marts exclude rows with `dq_dropoff_before_pickup`). **This replaces D22 (confirmed by the project owner on 2026-11-10).**
 
 **Why:** The catalog's data-quality KPIs ("dropoff-before-pickup share", "zero or negative distance and fare share", "unmatched zone share", null-rate drift) are computed from flags on Silver rows. Under D22 those rows are rejected and never reach Silver, so the KPIs would have to be rebuilt from the rejected data. Silver's description also says "validated", with `dq_*` columns in its schema.
 
@@ -409,11 +412,13 @@ Every significant choice in this project, the alternatives considered, and why w
 
 **Trade-off:** every Gold query must remember the filter; a shared view or the mart definitions in `spark/gold.py` apply it in one place. The M3 reconcile test (every injected fault ends in a reject) changes to "every injected fault is flagged or rejected as expected".
 
-**Implemented in M4 (2026-11-09).** `silver_invalid` holds only `malformed_json` and `null_pickup_time`. Two flags beyond the medallion page, `dq_pickup_out_of_range` and `dq_trip_too_long`, replace the M3 rejects for those cases. On an 80,000-message run with the `realistic` profile, 58 rows were rejected and about 21,000 flags were set (mostly FHV's natural 85% null pickup zone). Still marked 🟡 until you confirm it.
+**Implemented in M4 (2026-11-09).** `silver_invalid` holds only `malformed_json` and `null_pickup_time`. Two flags beyond the medallion page, `dq_pickup_out_of_range` and `dq_trip_too_long`, replace the M3 rejects for those cases. On an 80,000-message run with the `realistic` profile, 58 rows were rejected and about 21,000 flags were set (mostly FHV's natural 85% null pickup zone).
 
 ---
 
-## D29 — Gold marts: hourly grain, additive measures 🟡
+## D29 — Gold marts: hourly grain, additive measures ✅
+
+Confirmed by the project owner on 2026-11-10.
 
 **Choice:** Every Gold daily mart is grouped by the pickup hour and holds only counts and sums (for example `trips`, `sum_total_amount`, `sum_distance_miles`), never averages or ratios. A day is the sum by `pickup_date`; a KPI such as average fare is `sum_total_amount / trips`, computed in the query. The formulas are in `specs/gold-schema.md`.
 
@@ -427,13 +432,31 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ---
 
-## D30 — Deduplication watermark on ingest time 🟡
+## D30 — Deduplication watermark on ingest time ✅
 
-**Choice:** Silver is deduplicated with `dropDuplicatesWithinWatermark(["trip_id"])`, with the watermark on `kafka_timestamp` (5 minutes, `processing.dedup_watermark_minutes`), not on the pickup time. The Gold stage keeps its own 10-minute watermark on `pickup_ts`.
+Confirmed by the project owner on 2026-11-10, with the window set to 2 minutes (first proposed as 5) to cut the dedup state in memory. The producer's duplicates appear within 100 records of the original, far inside 2 minutes.
+
+**Choice:** Silver is deduplicated with `dropDuplicatesWithinWatermark(["trip_id"])`, with the watermark on `kafka_timestamp` (2 minutes, `processing.dedup_watermark_minutes`), not on the pickup time. The Gold stage keeps its own 10-minute watermark on `pickup_ts`.
 
 **Why:** Spark drops rows whose event time is older than the watermark in a deduplication. With the watermark on pickup time, the injected late trips and out-of-range pickups would be silently dropped, and the project's accounting (sent = Silver + invalid + removed duplicates) and the "flag, don't reject" policy (D27) would not hold. Ingest time never goes backwards, so only real repeats are removed.
 
-**Trade-offs:** A duplicate arriving more than 5 minutes (ingest time) after the first is kept. The count of removed rows is derived (sent - Silver - invalid) in `scripts/reconcile.py` and compared with the producer's injected duplicates, because a streaming query cannot count what it drops. Trips that are identical in every field (common in FHV, which has few fields) are removed too: on a 20,000-message FHV sample, 46 rows were removed against 21 injected duplicates, and the other 25 were identical rows already in the TLC file (gap 4 in `PLAN.md` §6.7).
+**Trade-offs:** A duplicate arriving more than 2 minutes (ingest time) after the first is kept. The count of removed rows is derived (sent - Silver - invalid) in `scripts/reconcile.py` and compared with the producer's injected duplicates, because a streaming query cannot count what it drops. Trips that are identical in every field (common in FHV, which has few fields) are removed too: on a 20,000-message FHV sample, 46 rows were removed against 21 injected duplicates, and the other 25 were identical rows already in the TLC file (gap 4 in `PLAN.md` §6.7).
+
+---
+
+## D31 — Batch partitions by source-file month; monthly marts are additive 🟡
+
+**Choice:** (1) Silver, `silver_invalid` and the Gold marts of the batch store are partitioned by the month of the **source file** (`year=/month=`), not by each trip's pickup time. A file is loaded by deleting and rewriting its own partition. (2) The monthly marts (`trips_monthly`, `revenue_monthly`, `trip_efficiency_monthly`, `demand_monthly_hourly`, `zone_od_monthly`, `hvfhv_economics_monthly`, `data_quality_monthly`) are sums of the daily marts over one load month with fewer keys. Month-over-month and year-over-year growth, the rolling 12-month average, the seasonality index and the shares are computed by `scripts/queries/*.sql`, not stored.
+
+**Why:** (1) A TLC file holds some rows with pickup times outside its month (flagged by `dq_pickup_out_of_range`). Partitioning by pickup time would put them in another month's partition, so rerunning one file could overwrite rows that another file contributed. Partitioning by file month makes a rerun touch exactly one partition per dataset, which is what the plan's acceptance test 2 needs. (2) D29 applied to the monthly grain: stored ratios cannot be rolled up or recomputed after a month is reloaded, and a query can return NULL ("not enough history") exactly where a window is incomplete, which the catalog asks for.
+
+**Alternatives**
+- *Partition by pickup month (the plan's first wording):* matches the date of each trip, but breaks idempotence as above.
+- *Store growth, rolling and seasonality columns in the monthly marts (the medallion page's wording):* ready-made columns, but the whole table must be recomputed after every load, and a reload of an old month changes later rows.
+
+**Trade-offs:** a trip picked up on Dec 31 and stored in the January file counts in January's monthly mart (the daily marts keep its real date). Dashboards need the query formulas. `trips_monthly` for a month can therefore differ by a few rows from a count by pickup month.
+
+---
 
 ---
 
@@ -466,7 +489,7 @@ Every significant choice in this project, the alternatives considered, and why w
 | Q3 | ~~How many months to replay~~ Resolved: stream replays 2026-01; batch uses 24 months (D25, to confirm) | M2 / M5 |
 | Q4 | Whether a dashboard or SQL serving layer is wanted (D12 extension) | After M7 |
 | Q5 | Confirm D24 and D25 design: 24 months, 12, or 49; DuckDB + Spark SQL only | Before M5 |
-| Q6 | Confirm D26 (medallion layout, stream builds daily marts) and D27 (flag instead of reject) | Before M4 |
+| Q6 | Confirm D26 (medallion layout, stream builds daily marts). D27 is confirmed (2026-11-10). | Before M5 |
 | Q7 | Spec details: the `fhvhv` vs `hvfhv` service value, and the extra Silver columns the KPIs need (`PLAN.md` §6.7 gaps) | Before M4 |
 | Q8 | Is the 2022 Airport fee comparison required? If so the range must start in 2021 or 2022 (D25) | Before M5 |
 
@@ -474,7 +497,9 @@ Every significant choice in this project, the alternatives considered, and why w
 
 | Date | Change |
 |---|---|
-| 2026-11-09 | M4 built. D27 implemented (still to confirm). Added D29 (Gold marts as hourly additive measures) and D30 (deduplication watermark on Kafka ingest time). |
+| 2026-11-10 | M5 built. Added D31 (batch partitions by source-file month; monthly marts additive).
+| 2026-11-10 | D27, D29 and D30 confirmed. The deduplication window (D30) changed from 5 to 2 minutes to reduce state memory. |
+| 2026-11-09 | M4 built. D27 implemented. Added D29 (Gold marts as hourly additive measures) and D30 (deduplication watermark on Kafka ingest time). |
 | 2026-11-05 | Added D28: stream and batch stay separate stores, combined only at query time with a cutover date (option A). Batch range changed to 2024-01..2025-12. Kept the live-against-baseline KPI, now a query over the combined views. |
 | 2026-11-05 | Read `specs/2_…medallion…html` and `specs/3_KPI.html`. Added D26 (medallion layers, which path builds which mart) and D27 (flag instead of reject; would replace D22). Changed D25 from 12 to 24 months, because the catalog's multi-year KPIs need more history. Added Q6 to Q8. Added M4 rework, M6 (Spark ML); end-to-end is now M7, hardening M8. |
 | 2026-11-04 | Added D24 (batch path alongside the stream) and D25 (historical store and query engines). Updated D1 and D16. Resolved Q3, added Q5. |

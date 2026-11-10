@@ -113,7 +113,8 @@ Pin all image versions; keep Spark and its Kafka connector (`spark-sql-kafka-0-1
 │   ├── batch_job.py          # M5: historic backfill, Gold monthly and health marts
 │   └── ml_job.py             # M6: Spark ML models
 ├── scripts/                  # download_data.py, reconcile.py, show_results.py, evaluate_stream.py,
-│                             #   benchmark_queries.py, combined_views.py, queries/*.sql (M5)
+│                             #   benchmark_queries.py, combined_views.py, compare_stream_batch.py (M5),
+│                             #   queries/*.sql (M5)
 ├── specs/                    # one spec per component (see §6)
 ├── tests/
 │   ├── test_schema.py
@@ -159,11 +160,11 @@ File patterns and column names above were **verified against the real 2026-01 fi
 8. Must restart cleanly from checkpoint without duplicating output (tested with the file source).
 
 ### 6.4 Batch job behavior (historic data, M5)
-1. Read the monthly Parquet files for each dataset from `data/` (all months in the configured range) with Spark's batch reader, using the explicit per-dataset schema. No Kafka and no JSON round-trip: `spark/transform.py` gets a typed-Parquet entry point that skips `from_json`, and the normalize, enrich and validate steps are the same functions the stream uses.
-2. Same validation policy as the stream (D27), same Silver model (§6.7), same deduplication on `trip_id`. Unusable rows go to `output/batch/silver_invalid`, partitioned the same way.
-3. Write Silver trips to `output/batch/silver/trips`, partitioned by `service_type/year/month` (year and month of the pickup time), as Parquet. The write is idempotent: rerunning a month overwrites only that month's partition (dynamic partition overwrite).
-4. Write one row per file load to `silver.batch_run_log` (`source_file`, `tlc_published_date`, `bronze_rows`, `silver_rows`, `duplicates_removed`, `schema_hash`, `start_ts`, `end_ts`, `status`). The pipeline-health KPIs are computed from it. `tlc_published_date` comes from the download script, which records it for each file.
-5. Build the Gold marts: daily (same definitions as the stream, over the full range), monthly, and pipeline health, into `output/batch/gold/`.
+1. Read the monthly Parquet files for each dataset from `data/` (all months in the configured range) with Spark's batch reader, one file at a time. No Kafka and no JSON round-trip: `spark/transform.py` has a typed-Parquet entry point (`read_typed`) that skips `from_json` and tolerates columns missing in older files (e.g. `cbd_congestion_fee` before 2025); `conform` (enrich, flags, `trip_id`) is the same function the stream uses.
+2. Same validation policy as the stream (D27) and same Silver model (§6.7). Duplicates are dropped with a plain `dropDuplicates(["trip_id"])` over the file (no watermark in batch). Unusable rows go to `output/batch/silver_invalid`, partitioned the same way.
+3. Write Silver trips to `output/batch/silver/trips`, partitioned by `service_type/year/month`, as Parquet. `year` and `month` are those of the **source file**, not of each pickup time: a file also holds rows picked up outside its month (flagged `dq_pickup_out_of_range`), and partitioning by pickup time would let one file's rerun overwrite another file's rows. A rerun deletes the file's own partition and rewrites it, so it is idempotent and touches no other month.
+4. Write one row per file load to `silver.batch_run_log` (append only; a rerun adds a row): `run_id`, `source_file`, `dataset`, `service_type`, `source_month`, `tlc_published_date`, `bronze_rows`, `invalid_rows`, `silver_rows`, `duplicates_removed`, `late_correction_rows`, `schema_hash`, `columns`, `start_ts`, `end_ts`, `gold_available_ts`, `status` (`success` or `failed`), `error`. A missing or unreadable file, or a Gold failure, is logged as failed and the run continues. The pipeline-health KPIs are computed from it. `tlc_published_date` comes from the download script, which records each file's `Last-Modified` date in `data/tlc_published.json`. `late_correction_rows` counts trip_ids of the previous load of the partition that are missing from the new one.
+5. Build the Gold marts for the month from its Silver: the daily marts (same definitions as the stream, `spark/gold.py`), then the monthly marts as sums of the daily marts with fewer keys, and `gold.batch_run_metrics` from the log at the end of the run. All marts hold additive measures only (D29, D31): growth, rolling averages, seasonality and shares are computed by the KPI queries. Output in `output/batch/gold/<mart>/year=/month=`.
 6. Fault injection does not apply to the batch path: it reads the original files. Real data problems (nulls, rows outside the month, negative values) are flagged by the `dq_*` rules.
 
 **Query layer.** The Silver and Gold Parquet are queried in place (no load step):
@@ -218,7 +219,7 @@ Bronze is not copied a second time: the Kafka topics and the downloaded files ar
 
 **Silver transformations** (spec): rename the timestamp columns to `pickup_ts`/`dropoff_ts`; cast types; map `trip_distance`/`trip_miles` to `distance_miles`; map `tip_amount`/`tips` to one tip column; add `service_type`; union the four sources; derive `duration_sec`; compute the dq flags; deduplicate.
 
-**Gaps and conflicts found when comparing the specs with the current code.** Resolved in M4 as proposed below, except gap 7 (M5); the result is in `specs/silver-schema.md`. Gap 5 is D27 and still awaits confirmation. Gap 4 has a measured side effect: trips identical in every field collapse (FHV, which has few fields, lost 25 per 20,000 rows beyond the injected duplicates, see D30).
+**Gaps and conflicts found when comparing the specs with the current code.** Resolved in M4 as proposed below, except gap 7 (M5); the result is in `specs/silver-schema.md`. Gap 5 is D27 (confirmed 2026-11-10). Gap 4 has a measured side effect: trips identical in every field collapse (FHV, which has few fields, lost 25 per 20,000 rows beyond the injected duplicates, see D30).
 
 | # | Gap | Proposed resolution |
 |---|---|---|
@@ -278,7 +279,8 @@ Two parts. Both follow `specs/2_nyc_taxi_medallion_architecture.html` and `specs
   3. For fully closed windows, the sum of `trips_daily` counts equals the Silver trip count for those days. One zone-day is spot-checked against DuckDB on the Silver Parquet.
   4. Each Gold daily table contains the KPI columns for its scope in `specs/3_KPI.html` (for example, `revenue_daily` has no FHV rows).
 
-### M5 — Batch processing of historic data (Silver, Gold monthly marts, queries)
+### M5 — Batch processing of historic data (Silver, Gold monthly marts, queries) — built 2026-11-10
+**Status.** Code, tests and the scripts are done and verified on this machine, on synthetic files and on real data (2024-12, 2025-12, 2026-01). Acceptance: 1 done (difference 0 for six real files, 12.2M rows); 2 done (test); 3 done (every stream row equals the batch row, 47,000 rows over six marts, plus the two HVFHV marts with a 100,000-trip cap); 4 done (test, and on real data: 387 streamed hours in the combined views); 5 done on the loaded range (YoY needs a 12-month gap, Airport fee reports "not enough history"); 6 done (16 of 48 files, 45 ms against 486 ms). **Not done:** the full 24-month backfill, a full HVFHV month, and the Docker `spark-batch` service. Measured Silver size and speed change the plan: about 72–85 GB and about 9 hours for 24 months (`storage_requirements.md`, D25 open item).
 - Download the configured range of months for all four datasets (default 2024-01 to 2025-12, 24 months, ending before the streamed month; see D25 for why 12 is not enough, and D28 for why the range stops there).
 - Add the typed-Parquet entry point to `spark/transform.py` and implement `spark/batch_job.py` (§6.4). It writes `output/batch/silver/trips` partitioned by `service_type/year/month` and `output/batch/silver_invalid/`, the dimensions, and one row per file load to `silver.batch_run_log`. Add the `spark-batch` Compose service (profile `batch`).
 - Build the Gold marts in batch: the daily marts again over the full history, the monthly marts (`trips_monthly`, `revenue_monthly`, `trip_efficiency_monthly`, `demand_monthly_hourly`, `zone_od_monthly`, `hvfhv_economics_monthly`), and the batch health marts (`batch_run_metrics`, `data_quality_monthly`). These are KPI groups Historical trends and Batch pipeline health.
@@ -348,7 +350,7 @@ Two parts. Both follow `specs/2_nyc_taxi_medallion_architecture.html` and `specs
 | Windowed output delayed by watermark in append mode | Expected; document, and flush with a final trailing event or use `update` mode for dev |
 | 24 months of HVFHV (~500M rows, ~12 GB raw) is slow or runs out of memory in a local-mode Spark container | Process one month at a time (the job loops over months), keep shuffle partitions low, and allow a smaller range (for example 3 months) in `stream-config.yaml` for development |
 | A short history range cannot answer the multi-year KPIs (year-over-year, seasonality, fee-policy before/after) | Default to 24 months; the KPI is reported as "not enough history" when the range is too short (D25). The 2022 Airport fee comparison would need data back to 2021 |
-| Disk use of raw files plus processed output | Check free space (see `storage_requirements.md`: about 40–50 GB for 24 months) before the download; `data/` and `output/` are gitignored |
+| Disk use of raw files plus processed output | Check free space (see `storage_requirements.md`: about 72–85 GB for 24 months as built, about 55–60 GB with zstd and a shorter `trip_id`) before the download; `data/` and `output/` are gitignored |
 | A date is counted twice in the combined views, or falls in a gap between the batch range and the stream | Cutover date in one config value; each view takes one side per date; a test checks no date is on both sides and the batch range ends the month before the cutover |
 | The specs conflict with the built M3 output (column names, reject vs flag, missing columns; §6.7 gaps) | M4 starts with Silver conformance and a schema test; decisions D26 and D27 |
 | Spark ML on hundreds of millions of rows does not fit a local-mode container | Train trip-level models on a configurable sample; zone-hour demand models use the small aggregated table |

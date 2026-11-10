@@ -119,6 +119,28 @@ services:
       - ./producer/datasets.yaml:/config/datasets.yaml:ro
     restart: "no"
 
+  # M5 — batch backfill: monthly TLC files in /data -> Silver and Gold under /output/batch. Needs no Kafka.
+  #   python scripts/download_data.py --batch                 # fetch the month range first (about 14 GB)
+  #   docker compose --profile batch up spark-batch           # the whole configured range
+  #   docker compose --profile batch run --rm spark-batch python batch_job.py --months 2025-12   # one month
+  spark-batch:
+    build:
+      context: ./spark
+    container_name: spark-batch
+    profiles: ["batch"]
+    command: ["python", "-u", "batch_job.py"]
+    environment:
+      CONFIG_PATH: /config/stream-config.yaml
+      DATASETS_PATH: /config/datasets.yaml
+      SPARK_MASTER: ${BATCH_SPARK_MASTER:-local[2]}
+      SPARK_DRIVER_MEMORY: ${BATCH_DRIVER_MEMORY:-4g}
+    volumes:
+      - ./data:/data:ro
+      - ./output:/output
+      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ./producer/datasets.yaml:/config/datasets.yaml:ro
+    restart: "no"
+
   producer-yellow:
     <<: *producer
     environment:

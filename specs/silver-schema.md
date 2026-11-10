@@ -49,7 +49,7 @@ Rows that cannot be used at all, partitioned by `service_type`: `service_type`, 
 
 ## Deduplication
 
-Streaming only: `dropDuplicatesWithinWatermark(["trip_id"])` with the watermark on `kafka_timestamp` (`processing.dedup_watermark_minutes`, default 5). A copy is removed only if it arrives within that time of the first one. The watermark is on ingest time, not pickup time, so late trips (old pickup time) are not mistaken for expired state and stay in Silver (D30).
+Streaming only: `dropDuplicatesWithinWatermark(["trip_id"])` with the watermark on `kafka_timestamp` (`processing.dedup_watermark_minutes`, default 2). A copy is removed only if it arrives within that time of the first one. The watermark is on ingest time, not pickup time, so late trips (old pickup time) are not mistaken for expired state and stay in Silver (D30).
 
 ## Dimensions
 
@@ -62,4 +62,10 @@ Written once per run to `output/stream/silver/dim_*`, from `spark/dims.py` and t
 | `dim_ratecode` | `ratecode_id`, `ratecode_label` |
 | `dim_hvfhs_company` | `hvfhs_license_num`, `company` |
 
-`batch_run_log` (M5) and `ml_features` (M6) are not part of M4.
+## Batch path (M5)
+
+The batch job writes the same `silver.trips` and `silver_invalid` to `output/batch/silver/trips` and `output/batch/silver_invalid`, partitioned by `service_type/year/month`, where year and month are those of the **source file** (D31). `kafka_*` columns are null; `silver_write_ts` is the load time. Duplicates are removed per file with `dropDuplicates(["trip_id"])`. The dimension tables are written to `output/batch/silver/dim_*`.
+
+`silver.batch_run_log` (append only, `output/batch/silver/batch_run_log`) has one row per file load: `run_id`, `source_file`, `dataset`, `service_type`, `source_month`, `tlc_published_date`, `bronze_rows`, `invalid_rows`, `silver_rows`, `duplicates_removed`, `late_correction_rows`, `schema_hash`, `columns`, `start_ts`, `end_ts`, `gold_available_ts`, `status`, `error`. Source rows = `silver_rows + invalid_rows + duplicates_removed` for a successful load.
+
+`ml_features` (M6) is not built yet.

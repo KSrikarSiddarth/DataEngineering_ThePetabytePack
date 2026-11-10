@@ -13,7 +13,7 @@ TIME_COLS = ["hour_start", "pickup_date", "pickup_hour"]
 def silver(spark, zones):  # noqa: F811
     """Eight trips on 2026-01-10 (hour 10): 4 yellow (one out of period, one negative fare), green, fhv, 2 fhvhv."""
     items = [
-        ("yellow", msg("yellow")),                                                         # A: card, 21.00
+        ("yellow", msg("yellow", Airport_fee=1.75, cbd_congestion_fee=0.75)),              # A: card, 21.00, two fees
         ("yellow", msg("yellow", tpep_pickup_datetime="2026-01-10T10:30:00", tpep_dropoff_datetime="2026-01-10T10:50:00",
                        trip_distance=2.0, fare_amount=10.0, tip_amount=0.0, total_amount=12.0, payment_type=2)),  # B: cash
         ("yellow", msg("yellow", tpep_pickup_datetime="2025-10-01T10:00:00",
@@ -72,6 +72,7 @@ def test_revenue_daily_is_yellow_green_only_and_skips_negative_fares(silver):
     assert {r["service_type"] for r in rows(df)} == {"yellow", "green"}
     card = rows(df, service_type="yellow", payment_label="Credit card")[0]
     assert (card["trips"], card["sum_total_amount"], card["sum_tip_amount"], card["sum_base_fare"]) == (1, 21.0, 3.0, 15.0)
+    assert (card["sum_airport_fee"], card["sum_cbd_congestion_fee"], card["sum_congestion_surcharge"]) == (1.75, 0.75, 0.0)
     cash = rows(df, service_type="yellow", payment_label="Cash")[0]
     assert (cash["trips"], cash["sum_total_amount"], cash["sum_distance_miles"]) == (1, 12.0, 2.0)
     assert total(df, "trips", service_type="yellow") == 2          # D (negative fare) and C (out of period) excluded

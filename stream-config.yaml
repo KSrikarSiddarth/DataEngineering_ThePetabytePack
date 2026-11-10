@@ -157,7 +157,7 @@ processing:
   trigger_mode: processing_time             # processing_time | available_now (process what is in Kafka, then stop)
   trigger_interval_seconds: 10
   watermark_minutes: 10                     # Gold windows: how late an event-time hour may still be updated
-  dedup_watermark_minutes: 5                # Silver: how long (ingest time) a trip_id is remembered for deduplication
+  dedup_watermark_minutes: 2                # Silver: how long (ingest time) a trip_id is remembered for deduplication
   shuffle_partitions: 8
   validation:
     expected_month: "2026-01"
@@ -166,3 +166,21 @@ processing:
   zone_lookup: /data/taxi_zones/taxi_zone_lookup.csv
   output_dir: /output/stream                # Silver in silver/, Gold in gold/ (M5's batch store is /output/batch)
   checkpoint_dir: /output/checkpoints
+
+# ---------------------------------------------------------------------------
+# Batch processing of historic data (consumed by M5: spark/batch_job.py, scripts/download_data.py --batch)
+# The range ends the month before the streamed month (decisions.md D28) and needs no Kafka.
+# ---------------------------------------------------------------------------
+batch:
+  start_month: "2025-10"                    # 3 months for development; the plan default is "2024-01" (24 months, D25)
+  end_month: "2025-12"
+  datasets: [yellow, green, fhv, hvfhv]
+  input_dir: /data                          # the downloaded monthly files (data/ on the host)
+  output_dir: /output/batch                 # silver/, silver_invalid/, gold/ (the stream writes /output/stream)
+  shuffle_partitions: 16
+
+# ---------------------------------------------------------------------------
+# Query-time combination of the stream and batch Gold marts (D28; scripts/combined_views.py)
+# ---------------------------------------------------------------------------
+combined:
+  cutover_date: "2026-01-01"                # batch rows before this date, stream rows from it on

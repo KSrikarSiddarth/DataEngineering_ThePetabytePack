@@ -2,7 +2,7 @@
 
 Commands are for PowerShell from the project root. Steps 2 onward need Docker Desktop (see `installation.md`).
 
-**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 9.
+**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 10.
 
 ## 1. One-time setup
 
@@ -167,10 +167,53 @@ python scripts\show_results.py --output-dir "$run\out"
 
 HVFHV takes about 12 seconds to start because it sorts 20.9 million timestamps. Unset the variables afterwards with `Remove-Item Env:DATA_DIR,Env:REPLAY_SPEEDUP,Env:MAX_RECORDS,Env:QUALITY_PROFILE,Env:STATS_DIR,Env:SPARK_HOME,Env:PYSPARK_PYTHON,Env:OUTPUT_DIR,Env:CHECKPOINT_DIR,Env:ZONE_LOOKUP`.
 
-## 8. Tests, stop and reset
+## 8. Batch processing of historic data (M5)
+
+The batch path needs no Kafka. It reads the monthly TLC files in `data/` and writes Silver and Gold under `output/batch/`.
 
 ```powershell
-python -m pytest tests -q              # ~3 minutes (the Spark tests start a local Spark)
+# 1. Download the configured range (batch.start_month to batch.end_month in stream-config.yaml; now 2025-10 to 2025-12,
+#    about 1.7 GB. The plan default is 2024-01 to 2025-12, about 14 GB, mostly HVFHV). Change the two values to widen it.
+python scripts/download_data.py --batch
+python scripts/download_data.py --months 2025-12 --datasets yellow green fhv     # or just a few months
+
+# 2a. In Docker (the whole configured range, or one month)
+docker compose --profile batch up --build spark-batch
+docker compose --profile batch run --rm spark-batch python batch_job.py --months 2025-12
+
+# 2b. Or on the host (needs Java 8, 11 or 17 and pip install -r requirements-dev.txt; see Section 7 for SPARK_HOME)
+$env:ZONE_LOOKUP="data\taxi_zones\taxi_zone_lookup.csv"
+python spark\batch_job.py --months 2024-12 2025-12 --datasets yellow green fhv --input-dir data --output-dir output\batch
+```
+
+A run takes about 1 minute per small file on a 2-core machine; a month of HVFHV (about 21 million trips) takes much longer. Rerunning a month replaces only that month's partitions and adds a row to `silver/batch_run_log`. A missing file is logged as failed and the run continues; the exit code is 1 if any file failed.
+
+**Check and query**
+
+```powershell
+python scripts/reconcile.py --batch                 # source rows = silver + invalid + duplicates, per file (diff should be 0)
+python scripts/combined_views.py                    # writes output/combined.duckdb: batch tables, and combined_<mart> views
+duckdb output/combined.duckdb                       # then paste a file from scripts/queries/*.sql (replace {cutover})
+python scripts/benchmark_queries.py                 # every KPI query on DuckDB and Spark SQL, plus pruning vs full scan
+python scripts/benchmark_queries.py --no-spark      # DuckDB only (faster)
+```
+
+The KPI queries are in `scripts/queries/`: `trips_growth` (month-over-month, year-over-year, rolling 12 months, seasonality), `service_share_shift`, `revenue_trends`, `fee_impact`, `efficiency_trends`, `peak_hour_shift`, `zone_growth`, `driver_pay_trend`, `batch_health`, `data_quality_drift`, and `live_vs_baseline` (streamed hours against the batch history; needs the stream output too). A value that needs months that are not loaded is NULL, and the status column says "not enough history". With 2024-01 to 2025-12 loaded, the Airport fee comparison (before 2022) is reported that way.
+
+**Compare the stream with the batch for the streamed month** (the batch run goes to a throwaway folder, never into `output/batch`):
+
+```powershell
+python spark\batch_job.py --months 2026-01 --input-dir data --output-dir output\check --max-records yellow=20000 green=20000 fhv=20000 hvfhv=20000
+python scripts/compare_stream_batch.py --stream output/stream/gold --batch output/check/gold
+Remove-Item -Recurse -Force output\check
+```
+
+Run the producers with `QUALITY_PROFILE=clean` and the same `MAX_RECORDS` first. Every stream row (only closed hours exist) must equal the batch row with the same keys. With faults injected, or trips dropped as too late by the watermark, the two differ on purpose.
+
+## 9. Tests, stop and reset
+
+```powershell
+python -m pytest tests -q              # 80 tests, ~12 minutes on a 2-core machine (the Spark tests start a local Spark)
 python -m pytest tests -q -k "not spark and not real_data"    # fast subset (a few seconds)
 
 docker compose stop                    # stop everything, keep data
@@ -185,7 +228,7 @@ docker compose --profile ui --profile producers --profile spark down -v
 Remove-Item -Recurse -Force output
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
@@ -195,14 +238,14 @@ Remove-Item -Recurse -Force output
 | Producer waits for Kafka then gives up | `docker compose ps` shows whether `kafka-init` finished. Topics must exist before producers start. |
 | Producer is slow | `REPLAY_SPEEDUP` is paced on purpose. Use `$env:REPLAY_SPEEDUP="0"` for full speed. HVFHV also takes a while to sort at start-up. |
 | `spark-job` build fails on `curl` | The Maven Central download needs internet. Check proxy and firewall. |
-| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 8). |
+| `batch_job.py`: a file is `failed` with `not found` | The month is not in `data/`. Run `python scripts/download_data.py --months <month>`. |
+| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 9). |
 | Spark tests fail with `legacyInferArrayTypeFromFirstElement` | A machine-wide `SPARK_HOME` overrides PySpark. See `installation.md`. |
 | `FileNotFoundError` on a file that exists | Windows path longer than 260 characters. Use a shorter folder. |
 | Docker Desktop will not start on an Azure VM | B-series sizes cannot run nested virtualization. See `installation.md`. |
 
-## 10. Not built yet
+## 11. Not built yet
 
-- **Batch processing of historic data (M5):** the 24-month download, the `spark-batch` job, Silver and Gold under `output/batch/`, the KPI queries and the query benchmark.
 - **Spark ML (M6):** the `spark-ml` job and the model metrics.
 - The single-command `docker compose up --build` for the whole pipeline (M7) and the restart test (M8). Until M7, start the services in the order above.
-- Commands for M5 and M6 will be added here when they are built. Sections 5 to 7 describe the M4 stream (Silver and Gold); the Kafka path in Sections 2 to 5 is written but not run on a machine with Docker yet, while Section 7 (no Docker) is verified.
+- Commands for M6 will be added here when it is built. Sections 5 to 7 describe the M4 stream (Silver and Gold) and Section 8 the M5 batch path. The Kafka path in Sections 2 to 5 and the Docker service in Section 8 are written but not run on a machine with Docker yet; the host commands (Sections 7 and 8) are verified.

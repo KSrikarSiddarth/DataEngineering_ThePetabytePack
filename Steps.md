@@ -11,7 +11,7 @@ This project has two goals: **stream processing** of taxi trips through Kafka an
 | 2 | The producer | 🚧 built and tested without Kafka; Kafka path not run |
 | 3 | Spark: parse, validate, enrich | 🚧 built and tested locally on file input; Kafka source not run |
 | 4 | Silver conformance and stream Gold (daily KPI marts) | 🚧 built and tested locally on file input; Kafka source not run |
-| 5 | Batch processing of historic data (Silver, monthly Gold, query benchmark) | ⬜ |
+| 5 | Batch processing of historic data (Silver, monthly Gold, query benchmark) | 🚧 built and verified on 3 real months; full 24-month run not done |
 | 6 | Spark ML on the historic data | ⬜ |
 | 7 | End-to-end with Compose | ⬜ |
 | 8 | Hardening and docs | ⬜ |
@@ -230,7 +230,30 @@ python scripts/reconcile.py
 
 ---
 
-## Chapter 5 — Batch processing of historic data ⬜
+## Chapter 5 — Batch processing of historic data 🚧
+
+**Status.** Built and verified on this machine, on synthetic files and on real data for 2024-12, 2025-12 and 2026-01 (Yellow, Green, FHV, and a capped HVFHV). **Not done:** the full 24-month backfill (about 80 GB and about 9 hours on this machine, see `storage_requirements.md`), a full HVFHV month, and the Docker `spark-batch` service (no Docker here).
+
+**What was built**
+- `spark/batch_job.py`: one file at a time. `read_typed` (new in `transform.py`) reads the TLC Parquet, tolerating columns missing in older files; `conform` is the stream's function. Duplicate `trip_id`s are dropped per file. A file's partition `service_type/year/month` is deleted and rewritten, so a rerun is idempotent. Year and month are those of the source file (D31). Every load adds a row to `silver/batch_run_log`; a missing file or a Gold error is logged as failed and the run continues.
+- Gold per month: the eight daily marts of Chapter 4 (the revenue mart gained airport, CBD and congestion fee sums), then seven monthly marts as sums of them, `data_quality_monthly` (with duplicates and late corrections from the log) and, at the end of a run, `batch_run_metrics` (reconciliation, freshness, schema drift, runtime, backfill).
+- `scripts/queries/*.sql`: the Historical-trends and Batch-health KPIs as portable SQL (they run unchanged on DuckDB and Spark SQL), plus `live_vs_baseline.sql`. A value that needs months that are not loaded is NULL with a status "not enough history".
+- `scripts/combined_views.py` (batch tables, and `combined_<mart>` views with the cutover), `scripts/benchmark_queries.py` (timings on both engines and pruning against a full scan), `scripts/reconcile.py --batch`, `scripts/compare_stream_batch.py`, `scripts/download_data.py --batch` (also records TLC publication dates), and the `spark-batch` Compose service.
+
+**Verified here**
+- 10 batch tests (synthetic files; about 4 minutes): reconciliation, one log row per load, idempotent rerun, a corrected file replacing only its own partition and counting late corrections, schema drift (a column added in a later month), a missing file logged as failed, a month with only HVFHV, every KPI query on DuckDB and on Spark SQL with equal row counts, "not enough history" where 2 months are loaded, and the combined views.
+- Real data, 2024-12 and 2025-12, Yellow + Green + FHV, 12.2M rows, 10 minutes: `reconcile.py --batch` difference 0 for all six files (FHV removed 2,202 and 2,227 identical rows). Year-over-year for December 2025 computed: Yellow +17.4%, FHV +0.7%, Green -10.7%; the Airport fee comparison is "not enough history" and the CBD fee comparison runs (average CBD fee per trip 0.00 before, 0.53 after).
+- Stream against batch for 2026-01 (clean profile, 20,000 trips per dataset, same cap): every stream row equals the batch row in all six marts that had rows (47,000 rows). HVFHV was checked separately with 100,000 trips: the two HVFHV marts match too.
+- Benchmark on the real store: the KPI queries take 6–40 ms on DuckDB and 0.1–2.4 s on Spark SQL; the pruned Silver query needs 16 of 48 files and takes 45 ms against 486 ms for the full scan (Spark: 0.7 s against 1.9 s).
+
+**Things to know**
+- **Disk is much larger than planned.** Silver is 56–69 bytes per row (a third of it the `trip_id` string), so 24 months with HVFHV is about 72–85 GB, not 40. zstd compression saves 31% and a 16-character `trip_id` another 12 points; neither is applied (decision needed).
+- Speed on this 2-core VM is about 1.2M rows per minute, so a full backfill is roughly 9 hours; a development range of 3 months is practical.
+- A real run found a crash that tests missed: a month with no rows for a mart (no Yellow or Green file) broke the monthly roll-up. Fixed, and tested.
+- The freshness KPI measures the gap to TLC's publication date at load time, so a backfill shows hundreds of days.
+- Each month's Silver is written as 16 files per partition (the shuffle partition count), which is many small files for the tiny Green data.
+
+### Original plan for this chapter
 
 **The story.** The stream tells us what is happening right now. But a month of replayed data cannot say whether demand is growing year over year, how seasonality looks, or how fares moved after the congestion fee began. For that we need history, and with history comes the other big data problem: not speed, but size. Two years of HVFHV alone is about 500 million rows. This chapter adds the second path through the project: a batch job that processes many months at once into Silver, builds the monthly and pipeline-health Gold marts, and a query benchmark that shows how SQL behaves at that size.
 
@@ -317,6 +340,7 @@ Late and out-of-order data to show the watermark at work (already partly built i
 
 | Date | Change |
 |---|---|
+| 2026-11-10 | M5 built: batch job, monthly and health marts, KPI queries, combined views, benchmark, `reconcile --batch`, stream-vs-batch comparison, `spark-batch` service. Verified on synthetic files and real 2024-12, 2025-12 and 2026-01 data; stream and batch marts match exactly. Found that Silver is much larger than estimated (storage doc revised). Added D31. |
 | 2026-11-09 | M4 built: Silver conformance (typed columns, `trip_id`, `dq_*` flags, dimensions), deduplication, the eight stream Gold marts, reworked `reconcile.py` and `show_results.py`, new `evaluate_stream.py`, `specs/silver-schema.md` and `specs/gold-schema.md`. 70 tests pass. Verified on file input only (no Kafka, no Docker). Added D29 and D30; D27 implemented. |
 | 2026-11-05 | Stream and batch kept in separate stores and combined only at query time with a cutover date (D28, option A). Batch range is now 2024-01 to 2025-12. The live-against-baseline KPI stays, as a query over the combined views. |
 | 2026-11-05 | Read the medallion and KPI specs and updated all planning docs. Chapter 4 is now Silver conformance plus stream Gold daily marts (the M3 output must be reworked to match Silver). Chapter 5 now builds Silver and the monthly and health marts, over 24 months instead of 12. New Chapter 6 (Spark ML); end-to-end Compose is Chapter 7 and hardening Chapter 8. Added D26, D27. Planning only, no code. |

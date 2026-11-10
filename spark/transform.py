@@ -216,16 +216,45 @@ def _typed_nulls(df, fields):
                        for n, t in fields])
 
 
+def split_rows(rows, bad=None):
+    """Conformed rows -> (silver, invalid): a row with no pickup time cannot be used and is rejected.
+    `bad` (optional) holds unparseable messages that are rejected as they are."""
+    usable = F.col("pickup_ts").isNotNull()
+    silver = _typed_nulls(rows.where(usable), SILVER_FIELDS)
+    invalid = _typed_nulls(rows.where(~usable).withColumn("reject_reason", F.lit("null_pickup_time")),
+                           INVALID_FIELDS)
+    if bad is not None:
+        invalid = invalid.unionByName(_typed_nulls(bad, INVALID_FIELDS))
+    return silver, invalid
+
+
 def process(raw, specs, norms, zones, vcfg):
     """raw Kafka-shaped DataFrame -> (silver, invalid). Silver is not yet deduplicated (see `deduplicate`)."""
     parts = [parse_dataset(raw, name, spec, norms[name]) for name, spec in specs.items()]
     good = reduce(lambda a, b: a.unionByName(b), [g for g, _ in parts])
     bad = reduce(lambda a, b: a.unionByName(b), [b for _, b in parts])
+    return split_rows(conform(good, zones, vcfg), bad)
 
-    rows = conform(good, zones, vcfg)
-    usable = F.col("pickup_ts").isNotNull()
-    silver = _typed_nulls(rows.where(usable), SILVER_FIELDS)
-    no_pickup = (rows.where(~usable).withColumn("reject_reason", F.lit("null_pickup_time")))
-    invalid = (_typed_nulls(no_pickup, INVALID_FIELDS)
-               .unionByName(_typed_nulls(bad, INVALID_FIELDS)))
-    return silver, invalid
+
+def _typed_col(df, source_col, dtype):
+    """A source column cast to `dtype`, or a typed null when the file has no such column (schema drift
+    between months, e.g. cbd_congestion_fee only exists from 2025). Names match case-insensitively."""
+    if source_col is None or source_col.lower() not in {c.lower() for c in df.columns}:
+        return F.lit(None).cast(dtype)
+    return F.col(source_col).cast(dtype)
+
+
+def read_typed(df, name, spec, norm):
+    """Typed-Parquet entry point (batch path, M5): a TLC file read with Spark -> the same unified typed rows
+    that `parse_dataset` makes from JSON, so `conform` and everything after it is shared with the stream."""
+    mapped = {v for v in norm.values() if v}
+    extras = F.to_json(F.struct(*[_typed_col(df, c, SPARK_TYPES[t]).alias(c)
+                                  for c, t in spec["columns"].items() if c not in mapped]))
+    return df.select(
+        F.lit(service_type(name)).alias("service_type"),
+        F.lit(None).cast("int").alias("kafka_partition"),
+        F.lit(None).cast("long").alias("kafka_offset"),
+        F.lit(None).cast("timestamp").alias("kafka_timestamp"),
+        *[_typed_col(df, norm[key], dtype).alias(col) for key, col, dtype in NORM_COLUMNS],
+        extras.alias("extras"),
+    )

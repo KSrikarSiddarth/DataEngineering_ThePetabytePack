@@ -2,23 +2,27 @@
 
 How much disk the project needs, and where it goes. **Every number below is an estimate, not a measurement.** The raw file sizes come from the 2026-01 files we downloaded (M2). Everything else is reasoning about the pipeline. Replace the estimates with real numbers once M5 (batch) has run on one month.
 
+**What changed on 2026-11-10 (first measurement).** M5 ran on two real months of Yellow, Green and FHV (12M rows). Silver came out at **56–69 bytes per row**, about five times the source files, and 47% of a Yellow file is the 32-character `trip_id`. The Silver estimate below is therefore several times the earlier one (8–16 GB), and the 24-month plan no longer fits in 50 GB. HVFHV Silver is still extrapolated, not measured. See Section 6 for what reduces it.
+
+**Current setting.** `stream-config.yaml` is set to 3 months (2025-10 to 2025-12, `batch.start_month` and `batch.end_month`), which is the "Batch, small" scenario in Section 5 (about 22 GB in total).
+
 **What changed on 2026-11-05.** The KPI catalog (`specs/3_KPI.html`) needs more than 12 months of history (year-over-year growth, seasonality, fee-policy before/after), so the default batch range is now **24 months** (D25), and the project also gains Gold marts and Spark ML outputs (M6). The previous estimate (about 25 GB) was for 12 months.
 
 ## 1. Summary
 
-**Plan for about 40 GB; keep 50 GB free.**
+**Plan for about 80 GB (range 72–85) as built; about 55–60 GB with the two reductions in Section 6; keep that much free.**
 
 | Item | Estimate | Needed from | Freed afterwards? |
 |---|---|---|---|
 | Raw trip files, 24 months, all four datasets (Bronze for the batch path) | about 14 GB | M5 (1 month, about 0.6 GB, from M2) | No |
-| Silver trips, batch (`output/batch/silver`, plus `silver_invalid`) | 8–16 GB | M5 | No |
+| Silver trips, batch (`output/batch/silver`, plus `silver_invalid`) | 42–54 GB (Yellow, Green, FHV about 9 GB measured by row size; HVFHV 33–45 GB extrapolated) | M5 | No |
 | Gold marts, stream and batch (daily, monthly, health) | under 1 GB | M4, M5 | No |
 | Spark ML: features (sample), predictions, models, metrics | 1–3 GB | M6 | No |
 | Spark temporary files (sort and shuffle spill, mostly HVFHV) | about 5 GB | M5 | Yes, when the job ends |
 | Stream path: Kafka data (Bronze), Silver, Gold, checkpoints | 2–3 GB | M1–M4 | Kafka data with `docker compose down -v` |
 | Docker images (Kafka, Spark, producer, Kafka UI) and Docker/WSL disk overhead | about 3–4 GB | M1 | With `docker system prune` |
 | Python virtualenv (PySpark, DuckDB, pyarrow, pytest) and Spark jars | about 1 GB | M2 | No |
-| **Total** | **about 35–47 GB** | | |
+| **Total** | **about 72–85 GB** | | |
 
 ## 2. Raw input files (`data/`) — Bronze
 
@@ -42,7 +46,7 @@ Per month, from the 2026-01 files:
 
 | Folder | Estimate | Notes |
 |---|---|---|
-| `output/batch/silver/trips` (24 months) | 8–16 GB | Silver schema plus zone names and typed fee columns. The size depends on how many columns are kept and on compression. |
+| `output/batch/silver/trips` (24 months) | 42–54 GB | Measured: Yellow 65, Green 69, FHV 56 bytes per row (snappy). HVFHV has more columns (request and on-scene times, driver pay, six fees, flags), assumed 65–90 bytes per row over about 500M rows. Not measured yet. |
 | `output/batch/silver_invalid/` | well under 0.5 GB | Unusable rows only (D27). |
 | `output/batch/gold/` marts | under 1 GB | Aggregated, so small. |
 | `output/batch/gold/ml_*`, features, models | 1–3 GB | Trip-level models train on a sample (for example 5M rows). Zone-hour features are small. |
@@ -65,13 +69,25 @@ Per month, from the 2026-01 files:
 | Scenario | Months of history | Total disk |
 |---|---|---|
 | Stream only (M1–M4) | none | about 8–10 GB |
-| Batch, small (development) | 3 | about 15–18 GB |
-| Original proposal (too short for several catalog KPIs) | 12 | about 24–30 GB |
-| **Default plan** | **24** | **about 35–47 GB** |
-| Covers the 2022 Airport fee comparison too | 49 (2022-01 to 2026-01) | about 62–80 GB |
+| Batch, small (development) | 3 | about 22 GB |
+| Original proposal (too short for several catalog KPIs) | 12 | about 47 GB |
+| **Default plan** | **24** | **about 72–85 GB** |
+| Covers the 2022 Airport fee comparison too | 49 (2022-01 to 2026-01) | about 145 GB |
 | Default plus the uncapped HVFHV month in the stream (stretch) | 24 | add several GB for Kafka and the stream output |
 
 ## 6. Reducing disk use
+
+Measured on one real Yellow month (4.3M rows, 277 MB as written with snappy):
+
+| Change | Size | Saving | Cost |
+|---|---|---|---|
+| `spark.sql.parquet.compression.codec=zstd` | 194 MB | 31% | None to the schema or tests; a little more CPU |
+| `trip_id` cut from 32 to 16 hex characters | 212 MB | 24% | Spec, tests and D30 text change; a collision needs about 4 billion trips, and dedup only compares trips within one file or a few minutes |
+| Both | 160 MB | 43% | As above |
+| No `trip_id` at all (for comparison) | 147 MB | 47% | Not possible: it is the deduplication key |
+
+With both, HVFHV Silver would be about 19–26 GB and the whole plan about 55–60 GB. Neither change is applied yet.
+
 
 - Download fewer months: set the range in `stream-config.yaml` (`batch:` section) and pass `--months` to the download script. Check which catalog KPIs then show "not enough history".
 - Skip HVFHV for batch runs (`datasets` in the same section). It removes about 85% of the input and Silver, and the HVFHV KPIs and models.
@@ -81,7 +97,7 @@ Per month, from the 2026-01 files:
 
 ## 7. To measure later
 
-When M5 runs on one month, record: the raw size of that month, the size of its `output/batch/silver` partition, and the peak size of the Spark temp folder. When M6 runs, record the feature and prediction sizes. Multiply by the number of months and update the tables above.
+Measured in M5 so far (2024-12 and 2025-12, Yellow, Green, FHV): Silver 56–69 bytes per row; Gold 43 MB for the two months (zone_od_daily is 28 MB of it); run time 10 minutes for 12M rows on a 2-core VM, about 1.2M rows per minute, which would be roughly 9 hours for 24 months including 500M HVFHV rows. Still to record: one HVFHV month (Silver size per row, peak Spark temp folder), and in M6 the feature and prediction sizes.
 
 ## 8. Related files
 
