@@ -127,52 +127,106 @@ datasets:
       cbd_congestion_fee: float
 
 # ---------------------------------------------------------------------------
-# Unified trip model (used by the Spark job, M3). Maps each unified column to a
+# Unified trip model (used by the Spark job, M3/M4). Maps each unified column to a
 # source column of the dataset, or null when the dataset has no such field.
 # Every source column NOT named here is kept as JSON in the `extras` column.
+# M4 widened the mapping to carry every field the Silver schema and the KPIs need
+# (request/on-scene times, driver pay, typed fees, shared-ride flags, rate code).
 # ---------------------------------------------------------------------------
 normalize:
   yellow:
     pickup: tpep_pickup_datetime
     dropoff: tpep_dropoff_datetime
+    request: null
+    on_scene: null
     pu_location: PULocationID
     do_location: DOLocationID
     trip_distance: trip_distance
     passenger_count: passenger_count
-    fare_amount: fare_amount
+    base_fare: fare_amount
     tip_amount: tip_amount
     total_amount: total_amount
     payment_type: payment_type
+    ratecode: RatecodeID
+    driver_pay: null
+    hvfhs_license: null
+    tolls: tolls_amount
+    bcf: null
+    sales_tax: null
+    congestion_surcharge: congestion_surcharge
+    airport_fee: Airport_fee
+    cbd_congestion_fee: cbd_congestion_fee
+    shared_request_flag: null
+    shared_match_flag: null
   green:
     pickup: lpep_pickup_datetime
     dropoff: lpep_dropoff_datetime
+    request: null
+    on_scene: null
     pu_location: PULocationID
     do_location: DOLocationID
     trip_distance: trip_distance
     passenger_count: passenger_count
-    fare_amount: fare_amount
+    base_fare: fare_amount
     tip_amount: tip_amount
     total_amount: total_amount
     payment_type: payment_type
+    ratecode: RatecodeID
+    driver_pay: null
+    hvfhs_license: null
+    tolls: tolls_amount
+    bcf: null
+    sales_tax: null
+    congestion_surcharge: congestion_surcharge
+    airport_fee: null
+    cbd_congestion_fee: cbd_congestion_fee
+    shared_request_flag: null
+    shared_match_flag: null
   fhv:
     pickup: pickup_datetime
     dropoff: dropOff_datetime
+    request: null
+    on_scene: null
     pu_location: PUlocationID
     do_location: DOlocationID
     trip_distance: null
     passenger_count: null
-    fare_amount: null
+    base_fare: null
     tip_amount: null
     total_amount: null
     payment_type: null
+    ratecode: null
+    driver_pay: null
+    hvfhs_license: null
+    tolls: null
+    bcf: null
+    sales_tax: null
+    congestion_surcharge: null
+    airport_fee: null
+    cbd_congestion_fee: null
+    shared_request_flag: null
+    shared_match_flag: null
   hvfhv:
     pickup: pickup_datetime
     dropoff: dropoff_datetime
+    request: request_datetime
+    on_scene: on_scene_datetime
     pu_location: PULocationID
     do_location: DOLocationID
     trip_distance: trip_miles
     passenger_count: null
-    fare_amount: base_passenger_fare
+    base_fare: base_passenger_fare
     tip_amount: tips
     total_amount: null
     payment_type: null
+    ratecode: null
+    driver_pay: driver_pay
+    hvfhs_license: hvfhs_license_num
+    tolls: tolls
+    bcf: bcf
+    sales_tax: sales_tax
+    congestion_surcharge: congestion_surcharge
+    airport_fee: airport_fee
+    cbd_congestion_fee: cbd_congestion_fee
+    shared_request_flag: shared_request_flag
+    shared_match_flag: shared_match_flag

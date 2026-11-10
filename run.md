@@ -75,7 +75,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-s
 
 In Kafka UI: Topics → `taxi.*.raw` → Messages.
 
-## 5. Run Spark (parse, validate, enrich)
+## 5. Run Spark (Silver and Gold)
 
 Process everything currently in Kafka, then stop:
 
@@ -94,6 +94,8 @@ docker compose logs -f spark-job
 
 Start the Spark job **before** the producers for a live stream, or after them to process the backlog. Either way it reads from the earliest offset the first time.
 
+The job runs two stages in one process: Kafka → Silver (with deduplication), then Silver → the eight Gold marts. A Gold hour is written only after the 10-minute watermark passes it, so the newest hour or two appear later, and a short run does not write the last window. `python spark/stream_job.py --stage silver` (or `gold`) runs one stage on its own.
+
 The first build downloads the Spark image layers and the Kafka connector jars, so it takes several minutes and needs internet access.
 
 ## 6. View the results
@@ -102,8 +104,10 @@ Results are Parquet files on the host, in `output/`:
 
 | Path | Contents |
 |---|---|
-| `output/trips_clean/service=<name>/` | Valid trips in the unified model, with pickup/dropoff borough and zone |
-| `output/invalid/service=<name>/` | Rejected rows with `reject_reason` and the raw message |
+| `output/stream/silver/trips/service_type=<name>/` | Silver trips: one schema for all four services, with `dq_*` flags (`specs/silver-schema.md`) |
+| `output/stream/silver_invalid/service_type=<name>/` | Unusable rows (`malformed_json`, `null_pickup_time`) with the raw message |
+| `output/stream/silver/dim_*/` | Zone, payment type, rate code and HVFHV company lookups |
+| `output/stream/gold/<mart>/` | The eight daily marts, hourly rows with additive measures (`specs/gold-schema.md`) |
 | `output/producer-stats/*.json` | What each producer sent, including injected-fault counts |
 | `output/checkpoints/` | Spark progress (do not delete while the job is running) |
 
@@ -113,7 +117,7 @@ Results are Parquet files on the host, in `output/`:
 python scripts/reconcile.py
 ```
 
-Prints sent / clean / invalid per service, the reject reasons, and `OK` or `MISMATCH` (exit code 1). Injected duplicates count as separate messages in M3.
+Prints sent / silver / invalid / removed per service, the number of duplicates the producer injected, the reject reasons, how many Silver rows carry each `dq_*` flag, and `OK` or `MISMATCH` (exit code 1). Removed = sent - silver - invalid; it must cover every injected duplicate that was not rejected, and can be higher because trips identical in every field (mostly FHV) collapse too.
 
 **Summaries with DuckDB**
 
@@ -121,13 +125,21 @@ Prints sent / clean / invalid per service, the reject reasons, and `OK` or `MISM
 python scripts/show_results.py
 ```
 
-Prints trips per service (count, average distance and fare, revenue), top pickup boroughs and zones, rejected rows by service and reason, and the FHV rows flagged for a missing zone. Run your own query against the tables `clean` and `invalid`:
+Prints trips per service, top pickup zones, rejected rows by reason, the flagged rows, and Gold results (trips per day, average fare and card tip rate, HVFHV driver pay share). Run your own query against the tables `silver`, `invalid` and each mart (`trips_daily`, `revenue_daily`, ...). Gold holds sums, so compute ratios in the query:
 
 ```powershell
-python scripts/show_results.py --sql "SELECT service, count(*) AS n FROM clean WHERE PUBorough = 'Manhattan' GROUP BY service"
+python scripts/show_results.py --sql "SELECT pickup_date, sum(sum_total_amount) / sum(trips) AS avg_fare FROM revenue_daily GROUP BY ALL ORDER BY 1"
 ```
 
 Add `--output-dir <path>` for output somewhere other than `output/`.
+
+**Evaluate the stream against the proposed targets (`evaluation.md`)**
+
+```powershell
+python scripts/evaluate_stream.py
+```
+
+Prints latency (S1) and throughput (S3) from the Silver timestamps. Only meaningful for a run from Kafka: the file source stamps rows with the processing time, so latency reads 0 s there.
 
 ## 7. Try it without Docker (verified on the dev machine)
 
@@ -145,7 +157,7 @@ foreach ($d in "yellow","green","fhv","hvfhv") { python producer\producer.py --d
 # 2. Spark streaming job on those files (a machine-wide SPARK_HOME would clash: point it at pip's pyspark)
 $env:SPARK_HOME = (python -c "import os,pyspark;print(os.path.dirname(pyspark.__file__))")
 $env:PYSPARK_PYTHON = (Get-Command python).Source
-$env:OUTPUT_DIR="$run\out"; $env:CHECKPOINT_DIR="$run\out\checkpoints"; $env:ZONE_LOOKUP="data\taxi_zones\taxi_zone_lookup.csv"
+$env:OUTPUT_DIR="$run\out\stream"; $env:CHECKPOINT_DIR="$run\out\checkpoints"; $env:ZONE_LOOKUP="data\taxi_zones\taxi_zone_lookup.csv"
 python spark\stream_job.py --source files --input-dir "$run\in"
 
 # 3. Check the result
@@ -190,8 +202,7 @@ Remove-Item -Recurse -Force output
 
 ## 10. Not built yet
 
-- **Silver conformance and stream Gold (M4):** the stream output moves from `output/trips_clean` and `output/invalid` to `output/stream/silver/trips`, `output/stream/silver_invalid` and `output/stream/gold/`, and the columns are renamed to the Silver schema. Sections 5 to 7 and the scripts (`reconcile.py`, `show_results.py`) will change then.
 - **Batch processing of historic data (M5):** the 24-month download, the `spark-batch` job, Silver and Gold under `output/batch/`, the KPI queries and the query benchmark.
 - **Spark ML (M6):** the `spark-ml` job and the model metrics.
 - The single-command `docker compose up --build` for the whole pipeline (M7) and the restart test (M8). Until M7, start the services in the order above.
-- Commands for M4 to M6 will be added here when they are built. Until then, everything in this file describes the M3 outputs.
+- Commands for M5 and M6 will be added here when they are built. Sections 5 to 7 describe the M4 stream (Silver and Gold); the Kafka path in Sections 2 to 5 is written but not run on a machine with Docker yet, while Section 7 (no Docker) is verified.

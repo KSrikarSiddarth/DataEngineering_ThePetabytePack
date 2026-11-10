@@ -156,17 +156,13 @@ processing:
   max_offsets_per_trigger: 50000            # bounds micro-batch size; 0 = unlimited
   trigger_mode: processing_time             # processing_time | available_now (process what is in Kafka, then stop)
   trigger_interval_seconds: 10
-  watermark_minutes: 10
+  watermark_minutes: 10                     # Gold windows: how late an event-time hour may still be updated
+  dedup_watermark_minutes: 5                # Silver: how long (ingest time) a trip_id is remembered for deduplication
   shuffle_partitions: 8
-  windows:
-    zone_hourly: 1 hour
-    service_hourly: 1 hour
-    payment: 5 minutes
   validation:
     expected_month: "2026-01"
     date_tolerance_days: 1                  # accepted slack around the expected month
     max_trip_hours: 24
-    location_required_services: [yellow, green, hvfhv]   # null pickup/dropoff zone rejects these; FHV rows are only flagged
   zone_lookup: /data/taxi_zones/taxi_zone_lookup.csv
-  output_dir: /output
+  output_dir: /output/stream                # Silver in silver/, Gold in gold/ (M5's batch store is /output/batch)
   checkpoint_dir: /output/checkpoints

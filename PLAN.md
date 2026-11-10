@@ -106,12 +106,13 @@ Pin all image versions; keep Spark and its Kafka connector (`spark-sql-kafka-0-1
 │   └── producer.py
 ├── spark/
 │   ├── Dockerfile
-│   ├── transform.py          # shared by both paths: normalize, validate, enrich
-│   ├── stream_job.py
+│   ├── transform.py          # shared by both paths: normalize, enrich, conform to Silver, dq flags
+│   ├── dims.py               # code-to-label dimension tables (M4)
+│   ├── stream_job.py         # Kafka -> Silver -> Gold (M4)
 │   ├── gold.py               # M4/M5: Gold mart definitions shared by stream and batch
 │   ├── batch_job.py          # M5: historic backfill, Gold monthly and health marts
 │   └── ml_job.py             # M6: Spark ML models
-├── scripts/                  # download_data.py, reconcile.py, show_results.py,
+├── scripts/                  # download_data.py, reconcile.py, show_results.py, evaluate_stream.py,
 │                             #   benchmark_queries.py, combined_views.py, queries/*.sql (M5)
 ├── specs/                    # one spec per component (see §6)
 ├── tests/
@@ -149,13 +150,13 @@ File patterns and column names above were **verified against the real 2026-01 fi
 
 ### 6.3 Spark job behavior
 1. Read the four raw topics (`startingOffsets=earliest`), tagging each row with `service` (yellow|green|fhv|hvfhv) from the topic name.
-2. Parse JSON per dataset with an explicit `StructType` (no schema inference); cast timestamps. Then **normalize** to one unified trip schema: `service, pickup_ts, dropoff_ts, PULocationID, DOLocationID, trip_distance, passenger_count, fare_amount, tip_amount, total_amount, payment_type, extras` (a JSON/map column holding dataset-specific fields such as `trip_type` or driver pay). Fields a dataset lacks (e.g. fares for FHV) are null. *(This is the M3 model. M4 conforms it to the Silver schema in §6.7: renamed columns, `trip_id`, `duration_sec`, typed fee columns, `dq_*` flags.)*
-3. **Validation** — rules that need a field apply only to datasets that have it (e.g. fare checks skip FHV; FHV rows with null location IDs are kept but flagged, not rejected). Reject (route to `taxi.trips.invalid` or `output/invalid`) rows where: dropoff < pickup, `trip_distance < 0`, `total_amount < 0`, null pickup time, pickup outside January 2026 (±tolerance), or null location IDs.
+2. Parse JSON per dataset with an explicit `StructType` (no schema inference); cast timestamps. Then **normalize** every dataset to one typed trip model using the `normalize` section of `producer/datasets.yaml` (times, zones, distance, fares, driver pay, typed fees, shared-ride flags, rate code); what is not mapped is kept as JSON in `extras`. Fields a dataset lacks (e.g. fares for FHV) are null. *(Built in M4: the output is `silver.trips`, §6.7 and `specs/silver-schema.md`.)*
+3. **Validation** (D27) — only rows that cannot be used are *rejected* to `silver_invalid`: malformed JSON and null pickup time. Everything else stays in Silver with a boolean `dq_*` flag (dropoff before pickup, zero or negative distance, negative fare, unmatched or null zone, pickup out of range, trip over 24 hours). Rules that need a field apply only to datasets that have it.
 4. **Enrichment** — broadcast join with `taxi_zone_lookup.csv` for pickup and dropoff borough/zone.
-5. **Deduplicate** on `trip_id` with `dropDuplicatesWithinWatermark` (M4), counting the rows removed.
-6. **Gold daily marts** (M4; event-time windows, watermark 10 minutes, hourly streaming grain rolled up to the day): `trips_daily`, `demand_hourly`, `zone_od_daily`, `revenue_daily`, `trip_efficiency_daily`, `hvfhv_economics_daily`, `hvfhv_service_daily`, `data_quality_daily`. Columns and calculations are defined in `specs/3_KPI.html`; services without the needed fields are excluded (e.g. no FHV in revenue). *(Replaces the earlier `agg_zone_hourly`, `agg_service_hourly` and `agg_payment_5min` proposal.)*
-7. **Sinks**: Silver trips and Gold marts as Parquet (append mode) under `output/stream/`, with checkpoints in `/output/checkpoints/<query>`; console sink for aggregates in dev mode.
-8. Must restart cleanly from checkpoint without duplicating output.
+5. **Deduplicate** on `trip_id` with `dropDuplicatesWithinWatermark`, with the watermark on Kafka ingest time (D30). The removed rows are derived by `scripts/reconcile.py` (sent - Silver - invalid).
+6. **Gold daily marts** (M4; `spark/gold.py`): a second stage reads the Silver Parquet back as a stream and builds `trips_daily`, `demand_hourly`, `zone_od_daily`, `revenue_daily`, `trip_efficiency_daily`, `hvfhv_economics_daily`, `hvfhv_service_daily`, `data_quality_daily` with event-time windows and a 10-minute watermark. The grain is the hour and the measures are additive, so a day is a sum by `pickup_date` (D29, `specs/gold-schema.md`). Services without the needed fields are excluded (e.g. no FHV in revenue). *(Replaces the earlier `agg_zone_hourly`, `agg_service_hourly` and `agg_payment_5min` proposal.)*
+7. **Sinks**: Silver trips, `silver_invalid` and the dimension tables as Parquet under `output/stream/silver*`, Gold marts under `output/stream/gold/<mart>` (append mode), checkpoints in `/output/checkpoints/<query>`; console sink in dev mode. A finite (`available_now`) run finishes Silver before starting Gold.
+8. Must restart cleanly from checkpoint without duplicating output (tested with the file source).
 
 ### 6.4 Batch job behavior (historic data, M5)
 1. Read the monthly Parquet files for each dataset from `data/` (all months in the configured range) with Spark's batch reader, using the explicit per-dataset schema. No Kafka and no JSON round-trip: `spark/transform.py` gets a typed-Parquet entry point that skips `from_json`, and the normalize, enrich and validate steps are the same functions the stream uses.
@@ -217,7 +218,7 @@ Bronze is not copied a second time: the Kafka topics and the downloaded files ar
 
 **Silver transformations** (spec): rename the timestamp columns to `pickup_ts`/`dropoff_ts`; cast types; map `trip_distance`/`trip_miles` to `distance_miles`; map `tip_amount`/`tips` to one tip column; add `service_type`; union the four sources; derive `duration_sec`; compute the dq flags; deduplicate.
 
-**Gaps and conflicts found when comparing the specs with the current code (to resolve in M4):**
+**Gaps and conflicts found when comparing the specs with the current code.** Resolved in M4 as proposed below, except gap 7 (M5); the result is in `specs/silver-schema.md`. Gap 5 is D27 and still awaits confirmation. Gap 4 has a measured side effect: trips identical in every field collapse (FHV, which has few fields, lost 25 per 20,000 rows beyond the injected duplicates, see D30).
 
 | # | Gap | Proposed resolution |
 |---|---|---|
@@ -259,7 +260,9 @@ Numerical targets for streaming latency (S1 to S7) and model accuracy (M1 to M10
 - Implement steps 1–4 (multi-topic read, per-dataset parse, normalization, validation, enrichment) writing clean trips to Parquet.
 - **Accept:** with 1000 records produced per dataset (4000 total), `output/trips_clean` row count + invalid count = 4000, and the per-`service` counts reconcile with each producer's `messages_sent` (`python scripts/reconcile.py`; injected duplicates count as separate messages and are not removed in M3); enriched rows have non-null `PUZone` for valid location IDs.
 
-### M4 — Silver conformance and stream Gold (daily marts)
+### M4 — Silver conformance and stream Gold (daily marts) — built 2026-11-09
+**Status.** Code and tests are done and verified on file input (no Kafka, no Docker); the Kafka source, the Docker image and `scripts/evaluate_stream.py` against a real run are not verified. Acceptance below: 1 (schema test) done; 2 (reconcile) done on an 80,000-message run, with the removed-duplicates rule in D30; 3 done (on the same run, all 389 written service-hours equal the Silver count, and one zone-day matches DuckDB: 69 = 69); 4 done (the eight marts, columns in `specs/gold-schema.md`).
+
 Two parts. Both follow `specs/2_nyc_taxi_medallion_architecture.html` and `specs/3_KPI.html` (§6.6, §6.7).
 
 **A. Silver conformance (rework of the M3 output).**

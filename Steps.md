@@ -10,7 +10,7 @@ This project has two goals: **stream processing** of taxi trips through Kafka an
 | 1 | Infrastructure up (Kafka) | 🚧 written, not yet run (Docker unavailable on this machine) |
 | 2 | The producer | 🚧 built and tested without Kafka; Kafka path not run |
 | 3 | Spark: parse, validate, enrich | 🚧 built and tested locally on file input; Kafka source not run |
-| 4 | Silver conformance and stream Gold (daily KPI marts) | ⬜ |
+| 4 | Silver conformance and stream Gold (daily KPI marts) | 🚧 built and tested locally on file input; Kafka source not run |
 | 5 | Batch processing of historic data (Silver, monthly Gold, query benchmark) | ⬜ |
 | 6 | Spark ML on the historic data | ⬜ |
 | 7 | End-to-end with Compose | ⬜ |
@@ -175,7 +175,31 @@ python scripts/reconcile.py
 
 ---
 
-## Chapter 4 — Silver conformance and stream Gold ⬜
+## Chapter 4 — Silver conformance and stream Gold 🚧
+
+**Status.** Built and verified on this machine with the file source standing in for Kafka. The Kafka source, the Docker image and the Compose service are still not run (no Docker here).
+
+**What was built**
+- `spark/transform.py` reworked. The unified model is now `silver.trips` (`specs/silver-schema.md`): typed columns for times, zones, distance, fares, driver pay, six fee columns and the shared-ride flags, plus `trip_id` (a hash, because TLC has no key), `duration_sec`, `payment_label`, `service_type` (`fhvhv` for HVFHV), `kafka_timestamp` and `silver_write_ts`. `producer/datasets.yaml` carries the wider column mapping.
+- **Flag, don't reject (D27).** Ten boolean `dq_*` columns mark the problems the KPIs measure. Only malformed JSON and a null pickup time go to `silver_invalid`.
+- **Deduplication (D30).** `dropDuplicatesWithinWatermark` on `trip_id`, with the watermark on Kafka ingest time, so late trips are not mistaken for expired state.
+- `spark/dims.py`: `dim_zone`, `dim_payment_type`, `dim_ratecode`, `dim_hvfhs_company`, written once per run.
+- `spark/gold.py`: the eight daily marts as hourly-grain, additive-measure tables (D29, `specs/gold-schema.md`). The stream job's second stage reads Silver back as a stream, with a 10-minute watermark.
+- `spark/stream_job.py`: Silver and `silver_invalid` under `output/stream/`, Gold under `output/stream/gold/`, ten queries with their own checkpoints. `--stage silver|gold` runs one stage.
+- `scripts/reconcile.py`, `scripts/show_results.py` moved to the new layout; new `scripts/evaluate_stream.py` for latency (S1) and throughput (S3).
+
+**Verified here**
+- 26 Spark tests (10 transform, 11 Gold, 5 job): 26 rule cases, trip_id behaviour, typed fees, real data with the `messy` profile (every injected fault is flagged or rejected, nothing else is rejected), every Gold mart on hand-computed values, and the whole job on NDJSON files, including the duplicate being removed and a second run from the same checkpoints adding nothing.
+- A run on 80,000 real messages (20,000 per dataset, `realistic` profile): the accounting balances for all four services; Yellow, Green and HVFHV removed exactly the duplicates injected; every written Gold hour equals the Silver count (389 of 389); one zone-day matches DuckDB.
+
+**Not verified:** reading from a real Kafka broker, the Docker build and the `spark-job` service, and the latency and throughput figures (the file source stamps rows with the processing time, so S1 reads 0 s there).
+
+**Things to know**
+- FHV rows that are identical in every field collapse into one. 25 of 20,000 FHV rows were removed beyond the injected duplicates (D30).
+- About 18,500 of 80,000 Silver rows carry `dq_null_pu_location`. Almost all are FHV, where 85% of rows have no pickup zone in the TLC file.
+- Gold windows are written only after the watermark passes them. In a short sample, a service whose events span less than an hour (the HVFHV sample covered 24 minutes) writes nothing to its own marts (`hvfhv_*`); the other marts are driven by all services.
+
+### Original plan for this chapter
 
 **The story.** Chapter 3 cleaned the stream, but we built it before we had the full picture of what the project must answer. Two documents now say it exactly: `specs/2_nyc_taxi_medallion_architecture.html` defines Bronze, Silver and Gold tables, and `specs/3_KPI.html` lists every KPI with its question, calculation and Gold table. This chapter brings the stream in line with them. First the cleaned trips become **Silver** (one schema for all four services, typed, deduplicated, with data-quality flags). Then the stream becomes insight: **Gold** daily marts such as trips per day, demand by hour, revenue, trip efficiency, HVFHV economics and data quality.
 
@@ -293,6 +317,7 @@ Late and out-of-order data to show the watermark at work (already partly built i
 
 | Date | Change |
 |---|---|
+| 2026-11-09 | M4 built: Silver conformance (typed columns, `trip_id`, `dq_*` flags, dimensions), deduplication, the eight stream Gold marts, reworked `reconcile.py` and `show_results.py`, new `evaluate_stream.py`, `specs/silver-schema.md` and `specs/gold-schema.md`. 70 tests pass. Verified on file input only (no Kafka, no Docker). Added D29 and D30; D27 implemented. |
 | 2026-11-05 | Stream and batch kept in separate stores and combined only at query time with a cutover date (D28, option A). Batch range is now 2024-01 to 2025-12. The live-against-baseline KPI stays, as a query over the combined views. |
 | 2026-11-05 | Read the medallion and KPI specs and updated all planning docs. Chapter 4 is now Silver conformance plus stream Gold daily marts (the M3 output must be reworked to match Silver). Chapter 5 now builds Silver and the monthly and health marts, over 24 months instead of 12. New Chapter 6 (Spark ML); end-to-end Compose is Chapter 7 and hardening Chapter 8. Added D26, D27. Planning only, no code. |
 | 2026-11-04 | Goal widened to stream + batch processing of historic data. Added the batch milestone as M5 (Chapter 5); end-to-end Compose is now M6 and hardening is M7. Added KPI lists, D24 and D25. Planning only, no code. |

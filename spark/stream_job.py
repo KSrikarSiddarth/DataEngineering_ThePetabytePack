@@ -1,11 +1,15 @@
-"""M3 streaming job: Kafka (four raw topics) -> parse/normalize/enrich/validate -> Parquet.
+"""M4 streaming job: Kafka (four raw topics) -> Silver (+ invalid) -> Gold daily marts.
 
     python stream_job.py                                  # Kafka source, Parquet sinks (container default)
     python stream_job.py --source files --input-dir DIR   # dev: read producer --dry-run NDJSON files instead
+    python stream_job.py --stage silver|gold              # run only one stage (default: all)
 
-Writes <output_dir>/trips_clean and <output_dir>/invalid (partitioned by service), each with its own
-checkpoint under <checkpoint_dir>. Configuration: stream-config.yaml (`processing` section) and
-producer/datasets.yaml; env vars override a few values (see load_config).
+Stage 1 (silver): Kafka -> parse/normalize/enrich/conform -> deduplicate on trip_id -> Parquet.
+    <output_dir>/silver/trips (partitioned by service_type), <output_dir>/silver_invalid, <output_dir>/silver/dim_*
+Stage 2 (gold): the Silver Parquet is read back as a stream and aggregated into the eight daily marts
+    (spark/gold.py) with event-time windows and a watermark: <output_dir>/gold/<mart>.
+Every query has its own checkpoint under <checkpoint_dir>. Configuration: stream-config.yaml (`processing`
+section) and producer/datasets.yaml; env vars override a few values (see load_config).
 """
 import argparse
 import os
@@ -17,7 +21,9 @@ import yaml
 from pyspark.sql import SparkSession
 from pyspark.sql import types as T
 
-from transform import process
+from dims import write_dims
+from gold import MARTS
+from transform import SILVER_SCHEMA, deduplicate, process
 
 HERE = Path(__file__).resolve().parent
 
@@ -48,7 +54,7 @@ def load_config(env=os.environ):
 
 
 def build_spark(proc):
-    return (SparkSession.builder.appName("nyc-taxi-m3")
+    return (SparkSession.builder.appName("nyc-taxi-m4")
             .master(os.environ.get("SPARK_MASTER", "local[2]"))
             .config("spark.driver.memory", os.environ.get("SPARK_DRIVER_MEMORY", "2g"))
             .config("spark.sql.session.timeZone", "UTC")   # naive ISO timestamps are treated as UTC
@@ -71,7 +77,8 @@ def kafka_source(spark, conf):
     max_offsets = int(conf["proc"].get("max_offsets_per_trigger") or 0)
     if max_offsets:
         reader = reader.option("maxOffsetsPerTrigger", max_offsets)
-    return reader.load().select("topic", "partition", "offset", F.col("value").cast("string").alias("value"))
+    return reader.load().select("topic", "partition", "offset", F.col("timestamp").alias("kafka_timestamp"),
+                                F.col("value").cast("string").alias("value"))
 
 
 def ndjson_source(spark, input_dir, conf):
@@ -84,7 +91,8 @@ def ndjson_source(spark, input_dir, conf):
     return (spark.readStream.schema(schema).json(str(input_dir))
             .select(topic.alias("topic"), F.lit(0).alias("partition"),
                     # stand-in for a Kafka offset (monotonically_increasing_id is not allowed in streaming)
-                    F.xxhash64(F.input_file_name(), "value").alias("offset"), "value"))
+                    F.xxhash64(F.input_file_name(), "value").alias("offset"),
+                    F.current_timestamp().alias("kafka_timestamp"), "value"))
 
 
 def trigger_kwargs(conf):
@@ -93,14 +101,42 @@ def trigger_kwargs(conf):
     return {"processingTime": f"{int(conf['proc']['trigger_interval_seconds'])} seconds"}
 
 
-def start_sink(df, fmt, name, conf, args):
+def start_sink(df, fmt, name, out, ckpt, conf, partition_by=None):
     writer = df.writeStream.outputMode("append").queryName(name).trigger(**trigger_kwargs(conf))
     if fmt == "console":
         return writer.format("console").option("truncate", "false").option("numRows", 20).start()
-    out = Path(conf["output_dir"]) / name
-    ckpt = Path(conf["checkpoint_dir"]) / name
-    return (writer.format("parquet").partitionBy("service")
-            .option("path", str(out)).option("checkpointLocation", str(ckpt)).start())
+    writer = writer.format("parquet").option("path", str(out)).option("checkpointLocation", str(ckpt))
+    if partition_by:
+        writer = writer.partitionBy(partition_by)
+    return writer.start()
+
+
+def silver_paths(conf):
+    out = Path(conf["output_dir"])
+    return out / "silver" / "trips", out / "silver_invalid"
+
+
+def start_silver(spark, conf, args, zones):
+    raw = kafka_source(spark, conf) if args.source == "kafka" else ndjson_source(spark, args.input_dir, conf)
+    silver, invalid = process(raw, conf["specs"], conf["norms"], zones, conf["proc"]["validation"])
+    silver = deduplicate(silver, conf["proc"]["dedup_watermark_minutes"])
+    trips_path, invalid_path = silver_paths(conf)
+    ckpt = Path(conf["checkpoint_dir"])
+    return [start_sink(silver, args.sink, "silver_trips", trips_path, ckpt / "silver_trips", conf, "service_type"),
+            start_sink(invalid, args.sink, "silver_invalid", invalid_path, ckpt / "silver_invalid", conf,
+                       "service_type")]
+
+
+def start_gold(spark, conf, args):
+    """Read the Silver Parquet back as a stream and start one windowed aggregation per mart."""
+    trips_path, _ = silver_paths(conf)
+    trips_path.mkdir(parents=True, exist_ok=True)   # the file source needs the folder to exist
+    silver = (spark.readStream.schema(SILVER_SCHEMA).parquet(str(trips_path))
+              .withWatermark("pickup_ts", f"{int(conf['proc']['watermark_minutes'])} minutes"))
+    ckpt = Path(conf["checkpoint_dir"])
+    gold_dir = Path(conf["output_dir"]) / "gold"
+    return [start_sink(build(silver), args.sink, f"gold_{name}", gold_dir / name, ckpt / f"gold_{name}", conf)
+            for name, build in MARTS.items()]
 
 
 def main(argv=None):
@@ -109,6 +145,7 @@ def main(argv=None):
     ap.add_argument("--input-dir", help="NDJSON directory for --source files")
     ap.add_argument("--sink", choices=["parquet", "console"], default="parquet")
     ap.add_argument("--trigger-mode", choices=["processing_time", "available_now"])
+    ap.add_argument("--stage", choices=["all", "silver", "gold"], default="all")
     args = ap.parse_args(argv)
 
     conf = load_config()
@@ -123,12 +160,23 @@ def main(argv=None):
     spark = build_spark(conf["proc"])
     spark.sparkContext.setLogLevel("WARN")
     zones = load_zones(spark, conf["zone_lookup"])
-    raw = kafka_source(spark, conf) if args.source == "kafka" else ndjson_source(spark, args.input_dir, conf)
-    clean, invalid = process(raw, conf["specs"], conf["norms"], zones, conf["proc"]["validation"])
+    finite = conf["trigger_mode"] == "available_now"
 
-    queries = [start_sink(clean, args.sink, "trips_clean", conf, args),
-               start_sink(invalid, args.sink, "invalid", conf, args)]
-    if conf["trigger_mode"] == "available_now":
+    queries = []
+    if args.stage in ("all", "silver"):
+        if args.sink == "parquet":
+            write_dims(spark, zones, str(silver_paths(conf)[0].parent))
+        silver_queries = start_silver(spark, conf, args, zones)
+        if finite and args.stage == "all":
+            # The Gold stream reads what Silver has committed, so a finite run finishes Silver first.
+            for q in silver_queries:
+                q.awaitTermination()
+        else:
+            queries += silver_queries
+    if args.stage in ("all", "gold"):
+        queries += start_gold(spark, conf, args)
+
+    if finite:
         for q in queries:
             q.awaitTermination()
     else:

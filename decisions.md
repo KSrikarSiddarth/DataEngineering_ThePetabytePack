@@ -33,7 +33,9 @@ Every significant choice in this project, the alternatives considered, and why w
 | D25 | Historical store and query engines | Partitioned Parquet, 24 months, DuckDB + Spark SQL | 🟡 |
 | D26 | Data layers | Bronze (not copied), Silver, Gold; stream builds daily marts, batch builds the rest | 🟡 |
 | D28 | Stream and batch results | Separate stores; stream never merged into the historic store; combined only at query time with a cutover date | ✅ |
-| D27 | Validation policy v2 | Flag KPI-relevant violations in Silver, reject only unusable rows (would replace D22) | 🟡 |
+| D27 | Validation policy v2 | Flag KPI-relevant violations in Silver, reject only unusable rows (replaces D22; implemented in M4, awaiting your confirmation) | 🟡 |
+| D29 | Gold mart shape | Hourly grain, additive measures only; daily and ratios computed at query time | 🟡 |
+| D30 | Silver deduplication | `dropDuplicatesWithinWatermark` on `trip_id`, with the watermark on Kafka ingest time | 🟡 |
 
 ---
 
@@ -407,6 +409,32 @@ Every significant choice in this project, the alternatives considered, and why w
 
 **Trade-off:** every Gold query must remember the filter; a shared view or the mart definitions in `spark/gold.py` apply it in one place. The M3 reconcile test (every injected fault ends in a reject) changes to "every injected fault is flagged or rejected as expected".
 
+**Implemented in M4 (2026-11-09).** `silver_invalid` holds only `malformed_json` and `null_pickup_time`. Two flags beyond the medallion page, `dq_pickup_out_of_range` and `dq_trip_too_long`, replace the M3 rejects for those cases. On an 80,000-message run with the `realistic` profile, 58 rows were rejected and about 21,000 flags were set (mostly FHV's natural 85% null pickup zone). Still marked 🟡 until you confirm it.
+
+---
+
+## D29 — Gold marts: hourly grain, additive measures 🟡
+
+**Choice:** Every Gold daily mart is grouped by the pickup hour and holds only counts and sums (for example `trips`, `sum_total_amount`, `sum_distance_miles`), never averages or ratios. A day is the sum by `pickup_date`; a KPI such as average fare is `sum_total_amount / trips`, computed in the query. The formulas are in `specs/gold-schema.md`.
+
+**Why:** The plan says the stream's grain is the hour, rolled up to the day. A stored average cannot be rolled up (the average of hourly averages is wrong), but sums can. The same property lets the stream marts and the batch marts be unioned and compared exactly (D28, M5).
+
+**Alternatives**
+- *Daily rows with averages:* matches the catalog wording but cannot be built incrementally in a stream, and cannot be rolled up from hourly rows.
+- *Two sets of tables, hourly and daily:* more tables and more to keep consistent.
+
+**Trade-off:** a dashboard needs a small formula per KPI instead of reading a ready-made column. The queries in `scripts/` hold them.
+
+---
+
+## D30 — Deduplication watermark on ingest time 🟡
+
+**Choice:** Silver is deduplicated with `dropDuplicatesWithinWatermark(["trip_id"])`, with the watermark on `kafka_timestamp` (5 minutes, `processing.dedup_watermark_minutes`), not on the pickup time. The Gold stage keeps its own 10-minute watermark on `pickup_ts`.
+
+**Why:** Spark drops rows whose event time is older than the watermark in a deduplication. With the watermark on pickup time, the injected late trips and out-of-range pickups would be silently dropped, and the project's accounting (sent = Silver + invalid + removed duplicates) and the "flag, don't reject" policy (D27) would not hold. Ingest time never goes backwards, so only real repeats are removed.
+
+**Trade-offs:** A duplicate arriving more than 5 minutes (ingest time) after the first is kept. The count of removed rows is derived (sent - Silver - invalid) in `scripts/reconcile.py` and compared with the producer's injected duplicates, because a streaming query cannot count what it drops. Trips that are identical in every field (common in FHV, which has few fields) are removed too: on a 20,000-message FHV sample, 46 rows were removed against 21 injected duplicates, and the other 25 were identical rows already in the TLC file (gap 4 in `PLAN.md` §6.7).
+
 ---
 
 ## D28 — Combine stream and batch at query time only ✅
@@ -446,6 +474,7 @@ Every significant choice in this project, the alternatives considered, and why w
 
 | Date | Change |
 |---|---|
+| 2026-11-09 | M4 built. D27 implemented (still to confirm). Added D29 (Gold marts as hourly additive measures) and D30 (deduplication watermark on Kafka ingest time). |
 | 2026-11-05 | Added D28: stream and batch stay separate stores, combined only at query time with a cutover date (option A). Batch range changed to 2024-01..2025-12. Kept the live-against-baseline KPI, now a query over the combined views. |
 | 2026-11-05 | Read `specs/2_…medallion…html` and `specs/3_KPI.html`. Added D26 (medallion layers, which path builds which mart) and D27 (flag instead of reject; would replace D22). Changed D25 from 12 to 24 months, because the catalog's multi-year KPIs need more history. Added Q6 to Q8. Added M4 rework, M6 (Spark ML); end-to-end is now M7, hardening M8. |
 | 2026-11-04 | Added D24 (batch path alongside the stream) and D25 (historical store and query engines). Updated D1 and D16. Resolved Q3, added Q5. |
