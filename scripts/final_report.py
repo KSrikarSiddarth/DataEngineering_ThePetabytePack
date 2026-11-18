@@ -2,7 +2,11 @@
 
     python scripts/final_report.py [--output-dir output] [--report FinalReport.txt]
 
-Three sections, each skipped with a note when its data does not exist yet:
+Each run overwrites FinalReport.txt and also saves a copy named FinalReport_YYYYMMDD_HHMMSS.txt beside it.
+
+Four sections, each skipped with a note when its data does not exist yet:
+  0. Hardware: the cores, memory and Spark master of the latest batch run (output/batch/run_info.json, written by
+     batch_job.py).
   1. Batch processing: pipeline health (scripts/queries/batch_health.sql) and every file load's time and throughput.
   2. Streaming targets S1 (latency) and S3 (throughput), measured from the stream Silver Parquet.
   3. Model targets M1-M10 and O1/O3 from the latest Spark ML run (same checks as scripts/evaluate_models.py).
@@ -37,6 +41,20 @@ def table(rows, headers):
     widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
     line = lambda cells: "  ".join(c.ljust(w) for c, w in zip(cells, widths)).rstrip()
     return [line(headers), line(["-" * w for w in widths]), *(line(r) for r in rows)]
+
+
+def hardware_section(con, batch_dir):
+    """Lines for the hardware section: cores used by Spark, master, memory and host size of the latest batch run."""
+    path = Path(batch_dir) / "run_info.json"
+    if not path.exists():
+        return [f"not available: no {path} (run the batch job first)"]
+    result = con.sql(f"SELECT * FROM read_json('{path.resolve().as_posix()}')")
+    info = dict(zip(result.columns, result.fetchone()))
+    rows = [("Spark master", info["spark_master"]), ("cores used by Spark", info["cores_used"]),
+            ("driver memory", info["driver_memory"]), ("shuffle partitions", info["shuffle_partitions"]),
+            ("driver host logical cores", info["host_logical_cores"]),
+            ("driver host RAM (GB)", "n/a" if info["host_ram_gb"] is None else info["host_ram_gb"])]
+    return [f"{name:38} {value}" for name, value in rows]
 
 
 def batch_section(con, batch_dir):
@@ -98,7 +116,8 @@ def build_report(output_dir):
     """The whole report as text, plus a PASS/FAIL/n-a tally of its target lines."""
     con = duckdb.connect()
     batch_dir = Path(output_dir) / "batch"
-    sections = [("1. Batch processing", batch_section(con, batch_dir)),
+    sections = [("0. Hardware (latest batch run)", hardware_section(con, batch_dir)),
+                ("1. Batch processing", batch_section(con, batch_dir)),
                 ("2. Streaming targets (evaluation.md section 2)", stream_section(con, output_dir)),
                 ("3. Model targets (evaluation.md section 3)", model_section(con, batch_dir))]
     lines = ["FINAL REPORT - NYC taxi stream + batch pipeline", f"generated {datetime.now():%Y-%m-%d %H:%M}",
@@ -118,7 +137,11 @@ def main():
     ap.add_argument("--report", default="FinalReport.txt")
     args = ap.parse_args()
     text = build_report(args.output_dir)
-    Path(args.report).write_text(text, encoding="utf-8")
+    report = Path(args.report)
+    report.write_text(text, encoding="utf-8")   # the latest report, overwritten each run
+    stamped = report.with_name(f"{report.stem}_{datetime.now():%Y%m%d_%H%M%S}{report.suffix}")
+    stamped.write_text(text, encoding="utf-8")   # a copy kept for history
+    print(f"saved {report} and {stamped}\n")
     print(text)
 
 

@@ -16,6 +16,7 @@ silver_invalid, gold/<daily, monthly and health marts>. Needs no Kafka.
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import sys
 import uuid
@@ -119,6 +120,24 @@ def load_file(spark, ctx, name, month):
     return row
 
 
+def write_run_info(spark, out):
+    """Record the hardware and Spark settings of this run in <out>/run_info.json (read by scripts/final_report.py).
+    cores_used is Spark's default parallelism: the cores of local[N], or all executor cores on a cluster."""
+    try:   # physical memory of the machine running the driver; sysconf does not exist on Windows
+        ram_gb = round(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30, 1)
+    except (AttributeError, ValueError, OSError):
+        ram_gb = None
+    sc = spark.sparkContext
+    info = {"spark_master": sc.master, "cores_used": sc.defaultParallelism,
+            "driver_memory": spark.conf.get("spark.driver.memory"),
+            "shuffle_partitions": int(spark.conf.get("spark.sql.shuffle.partitions")),
+            "host_logical_cores": os.cpu_count(), "host_ram_gb": ram_gb}
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "run_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
+    print(f"spark master {info['spark_master']}, {info['cores_used']} cores used, driver memory "
+          f"{info['driver_memory']}, host {info['host_logical_cores']} cores / {ram_gb} GB RAM", flush=True)
+
+
 def build_gold(spark, ctx, month, log_rows):
     """Build the daily marts for one loaded month from its Silver partitions, then roll them up to the monthly
     marts. data_quality_monthly also carries the month's load counts (duplicates, late corrections)."""
@@ -189,6 +208,7 @@ def main(argv=None):
     expected = list(month_range(cfg["start_month"], cfg["end_month"]))
     spark = build_spark({"shuffle_partitions": cfg["shuffle_partitions"]})
     spark.sparkContext.setLogLevel("WARN")
+    write_run_info(spark, out)
     ctx = {"specs": conf["specs"], "norms": conf["norms"], "vcfg": conf["proc"]["validation"],
            "zones": load_zones(spark, conf["zone_lookup"]), "input_dir": input_dir,
            "silver": out / "silver", "trips": out / "silver" / "trips", "invalid": out / "silver_invalid", "gold": out / "gold",
