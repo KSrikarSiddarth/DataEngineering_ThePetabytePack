@@ -198,8 +198,13 @@ def main(argv=None):
 
     write_dims(spark, ctx["zones"], str(ctx["silver"]))
     failed = 0
-    for month in args.months or expected:
-        rows = [load_file(spark, ctx, name, month) for name in datasets]
+    months = args.months or expected
+    for i, month in enumerate(months, 1):
+        tag = f"[{i}/{len(months)} {month}]"
+        rows = []
+        for name in datasets:
+            print(f"{tag} loading {name} ...", flush=True)   # sign of life: a big file can take a long time
+            rows.append(load_file(spark, ctx, name, month))
         if any(r["status"] == "success" for r in rows):
             try:
                 build_gold(spark, ctx, month, rows)
@@ -214,8 +219,11 @@ def main(argv=None):
             .write.mode("append").parquet(str(ctx["silver"] / "batch_run_log"))
         for r in rows:
             failed += r["status"] != "success"
-            print(f"{r['source_file']:34} {r['status']:8} bronze={r.get('bronze_rows')} silver={r.get('silver_rows')} "
-                  f"dups={r.get('duplicates_removed')} invalid={r.get('invalid_rows')} {r.get('error') or ''}")
+            secs = (r["end_ts"] - r["start_ts"]).total_seconds()
+            rate = round((r.get("bronze_rows") or 0) / secs) if secs else 0
+            print(f"{tag} {r['source_file']:34} {r['status']:8} bronze={r.get('bronze_rows')} silver={r.get('silver_rows')} "
+                  f"dups={r.get('duplicates_removed')} invalid={r.get('invalid_rows')} {secs:.0f}s {rate} rows/s "
+                  f"{r.get('error') or ''}", flush=True)
     build_health(spark, ctx, len(expected))
     return 1 if failed else 0
 

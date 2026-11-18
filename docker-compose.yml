@@ -129,6 +129,8 @@ services:
     container_name: spark-batch
     profiles: ["batch"]
     command: ["python", "-u", "batch_job.py"]
+    ports:
+      - "4040:4040"   # Spark UI while the job runs: http://localhost:4040
     environment:
       CONFIG_PATH: /config/stream-config.yaml
       DATASETS_PATH: /config/datasets.yaml
