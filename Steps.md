@@ -40,10 +40,10 @@ This project has two goals: **stream processing** of taxi trips through Kafka an
 **Status.** The files are written. The YAML parses and the init script compiles, but nothing has been run against Docker, because Docker can't run on this machine (see `installation.md` and the WSL test). Run the verification below on a machine with Docker before marking this chapter done.
 
 **What was built**
-- `stream-config.yaml`: the single configuration file for streaming. Chapter 1 uses its `kafka`, `topic_defaults` and `topics` sections. The rest is read in later chapters: `streaming` (volume, pacing, delivery), `data_quality` (null, invalid, duplicate, late, out-of-order, malformed and schema-drift rates, with `clean`, `realistic` and `messy` profiles), and `processing` (watermark, trigger, windows).
+- `config.yaml`: the single configuration file for streaming. Chapter 1 uses its `kafka`, `topic_defaults` and `topics` sections. The rest is read in later chapters: `streaming` (volume, pacing, delivery), `data_quality` (null, invalid, duplicate, late, out-of-order, malformed and schema-drift rates, with `clean`, `realistic` and `messy` profiles), and `processing` (watermark, trigger, windows).
 - `.env`: pinned versions (`KAFKA_VERSION=3.9.0`, Kafka UI `v0.7.2`) and host ports.
 - `docker-compose.yml`: `kafka` (KRaft, single broker, auto topic creation off, healthcheck), `kafka-init`, and `kafka-ui` behind the `ui` profile.
-- `kafka-init/`: a small Python image whose `create_topics.py` reads `stream-config.yaml`, creates every topic, treats existing topics as success, and fails if any topic is missing afterwards.
+- `kafka-init/`: a small Python image whose `create_topics.py` reads `config.yaml`, creates every topic, treats existing topics as success, and fails if any topic is missing afterwards.
 
 **Why topics come from the config file.** Auto-creation is disabled, so a typo in a topic name fails loudly instead of silently creating a new topic. Partitions and retention live in one place.
 
@@ -67,7 +67,7 @@ docker compose --profile ui up -d     # optional UI at http://localhost:8080
 1. Create `.env` with pinned versions and names: `KAFKA_VERSION`, `TOPIC_INVALID=taxi.trips.invalid`. Raw topic names (`taxi.yellow.raw`, `taxi.green.raw`, `taxi.fhv.raw`, `taxi.hvfhv.raw`) are defined in the producer's `datasets.yaml`.
 2. Create `docker-compose.yml` with:
    - `kafka`: the `apache/kafka` image in KRaft mode (no ZooKeeper), one broker. It has two listeners: `9092` for the host and `29092` for other containers. Add a healthcheck that runs `kafka-topics.sh --list`.
-   - `kafka-init`: a one-shot container that waits for the broker to be healthy, creates all five topics from `stream-config.yaml` (four raw ones with 3 partitions, 6 for HVFHV, 1-day retention, plus the invalid topic), and exits.
+   - `kafka-init`: a one-shot container that waits for the broker to be healthy, creates all five topics from `config.yaml` (four raw ones with 3 partitions, 6 for HVFHV, 1-day retention, plus the invalid topic), and exits.
    - `kafka-ui` (optional): the UI on port 8080 for looking at messages.
 3. Start it: `docker compose up -d kafka kafka-init`.
 
@@ -90,7 +90,7 @@ docker compose --profile ui up -d     # optional UI at http://localhost:8080
   - FHV's `PUlocationID` is about 85% null, so FHV messages are keyed by `dispatching_base_num` instead.
   - Yellow already has about 29% nulls in several columns, and a few Yellow and Green rows fall outside January. The data has real quality problems before any are injected.
   - FHV and HVFHV use different column names and have no `total_amount` (details in `specs/raw-schemas.md`).
-- Built `producer/`: `datasets.yaml` (per-dataset spec), `config.py`, `replay.py` (sorted, capped, sampled reads), `faults.py` (the quality profiles from `stream-config.yaml`), `pacing.py`, `serialize.py`, `producer.py`, a Dockerfile, and four Compose services under the `producers` profile.
+- Built `producer/`: `datasets.yaml` (per-dataset spec), `config.py`, `replay.py` (sorted, capped, sampled reads), `faults.py` (the quality profiles from `config.yaml`), `pacing.py`, `serialize.py`, `producer.py`, a Dockerfile, and four Compose services under the `producers` profile.
 - Injected faults are tagged in a Kafka header (`fault`), so later steps can tell injected problems from natural ones. `--dry-run` writes NDJSON instead of sending to Kafka.
 
 **Verified here:** 43 pytest tests pass (schemas against the real files, fault rates, ordering, pacing, malformed JSON, and a 1000-message dry run for each of the four datasets). Each dry run produced exactly 1000 messages, with keys, sorted by pickup time.
@@ -136,7 +136,7 @@ Then check each topic's message count, for example with `kafka-get-offsets.sh` o
   - **Normalize:** all four datasets map into one unified trip model, using the `normalize` section of `producer/datasets.yaml`. HVFHV `trip_miles`, `base_passenger_fare` and `tips` become distance, fare and tip. Fields a dataset doesn't have stay null, and everything unmapped is kept as JSON in `extras`.
   - **Enrich:** a broadcast left join with the zone lookup adds pickup and dropoff borough and zone.
   - **Validate:** a row can be rejected for null or out-of-range pickup time (January 2026 plus one day of tolerance), dropoff before pickup, trips over 24 hours, negative distance or amounts, a location ID missing from the lookup, or (Yellow, Green, HVFHV only) a null pickup or dropoff zone. Reasons are comma-joined in `reject_reason`. FHV rows with a missing zone are kept and flagged in `dq_flags`, since 85% of them have none.
-- `spark/stream_job.py`: reads the four Kafka topics (or NDJSON files with `--source files` for development), writes `trips_clean` and `invalid` as Parquet partitioned by `service`, each with its own checkpoint. `available_now` or `processing_time` triggers, set in `stream-config.yaml` or by `TRIGGER_MODE`.
+- `spark/stream_job.py`: reads the four Kafka topics (or NDJSON files with `--source files` for development), writes `trips_clean` and `invalid` as Parquet partitioned by `service`, each with its own checkpoint. `available_now` or `processing_time` triggers, set in `config.yaml` or by `TRIGGER_MODE`.
 - `spark/Dockerfile`: Python 3.11, Java, PySpark 3.5.3, and the Kafka connector jars baked in (URLs checked against Maven Central).
 - `scripts/reconcile.py`: compares each producer's `messages_sent` with the Spark output and lists reject reasons.
 
@@ -258,7 +258,7 @@ python scripts/reconcile.py
 **The story.** The stream tells us what is happening right now. But a month of replayed data cannot say whether demand is growing year over year, how seasonality looks, or how fares moved after the congestion fee began. For that we need history, and with history comes the other big data problem: not speed, but size. Two years of HVFHV alone is about 500 million rows. This chapter adds the second path through the project: a batch job that processes many months at once into Silver, builds the monthly and pipeline-health Gold marts, and a query benchmark that shows how SQL behaves at that size.
 
 **Implementation plan**
-1. Download 24 months (2024-01 to 2025-12, ending before the streamed month) of all four datasets with the existing `scripts/download_data.py --months ...` (13–14 GB raw; check free disk first). Twelve months would not be enough for the year-over-year and fee-policy KPIs (D25). The months go in a new `batch:` section of `stream-config.yaml`. The download script also records each file's TLC publication date for `batch_run_log`.
+1. Download 24 months (2024-01 to 2025-12, ending before the streamed month) of all four datasets with the existing `scripts/download_data.py --months ...` (13–14 GB raw; check free disk first). Twelve months would not be enough for the year-over-year and fee-policy KPIs (D25). The months go in a new `batch:` section of `config.yaml`. The download script also records each file's TLC publication date for `batch_run_log`.
 2. Add a typed-Parquet entry point to `spark/transform.py` that skips `from_json`. Normalize, validate, enrich and deduplicate stay the same functions the stream uses, so a trip is judged identically in both paths.
 3. Write `spark/batch_job.py`: process one month at a time (to keep memory in check), write `output/batch/silver/trips` partitioned by `service_type/year/month` and `output/batch/silver_invalid/`, with dynamic partition overwrite so rerunning a month is safe. Write one row per file to `silver.batch_run_log`.
 4. Build the Gold marts in batch: the daily marts again over the full history, the monthly marts (`trips_monthly`, `revenue_monthly`, `trip_efficiency_monthly`, `demand_monthly_hourly`, `zone_od_monthly`, `hvfhv_economics_monthly`), and the pipeline-health marts (`batch_run_metrics`, `data_quality_monthly`), using the same mart definitions as the stream where they overlap.
@@ -352,5 +352,5 @@ Late and out-of-order data to show the watermark at work (already partly built i
 | 2026-11-02 | Created `PLAN.md`, `.gitignore`, and this file. No pipeline code written yet. |
 | 2026-11-04 | M3 built: Spark parse/normalize/enrich/validate job, Docker image and Compose service, reconcile script. Streaming run verified on file input only. Fixed a producer bug found by the Spark tests (null injection could erase an injected invalid value). |
 | 2026-11-04 | M2 built: data download script, verified schemas (`specs/raw-schemas.md`), config-driven producer with fault injection, 43 passing tests. Kafka path not run (no Docker). |
-| 2026-11-04 | M1 files written: `stream-config.yaml`, `.env`, `docker-compose.yml`, `kafka-init/`. Not run: no Docker on this machine. |
+| 2026-11-04 | M1 files written: `config.yaml`, `.env`, `docker-compose.yml`, `kafka-init/`. Not run: no Docker on this machine. |
 | 2026-11-02 | Moved Green, FHV, and HVFHV into the MVP: one topic and producer service per dataset, a unified trip schema in Spark, cross-service aggregations. |

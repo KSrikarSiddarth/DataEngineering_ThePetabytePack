@@ -46,7 +46,7 @@ $env:MAX_RECORDS="1000"; $env:REPLAY_SPEEDUP="0"; $env:QUALITY_PROFILE="clean"
 docker compose --profile producers up producer-yellow producer-green producer-fhv producer-hvfhv
 ```
 
-Realistic stream: leave the variables unset (`Remove-Item Env:MAX_RECORDS, Env:REPLAY_SPEEDUP, Env:QUALITY_PROFILE`). Defaults come from `stream-config.yaml`:
+Realistic stream: leave the variables unset (`Remove-Item Env:MAX_RECORDS, Env:REPLAY_SPEEDUP, Env:QUALITY_PROFILE`). Defaults come from `config.yaml`:
 
 - `replay_speedup: 3600` replays one simulated hour per real second, so the full month takes about 12 minutes;
 - HVFHV is capped at 500,000 records;
@@ -172,7 +172,7 @@ HVFHV takes about 12 seconds to start because it sorts 20.9 million timestamps. 
 The batch path needs no Kafka. It reads the monthly TLC files in `data/` and writes Silver and Gold under `output/batch/`.
 
 ```powershell
-# 1. Download the configured range (batch.start_month to batch.end_month in stream-config.yaml; now 2025-10 to 2025-12,
+# 1. Download the configured range (batch.start_month to batch.end_month in config.yaml; now 2025-10 to 2025-12,
 #    about 1.7 GB. The plan default is 2024-01 to 2025-12, about 14 GB, mostly HVFHV). Change the two values to widen it.
 python scripts/download_data.py --batch
 python scripts/download_data.py --months 2025-12 --datasets yellow green fhv     # or just a few months
@@ -224,7 +224,7 @@ python spark\ml_job.py --batch-dir output\batch --models fare anomaly     # a su
 python scripts\evaluate_models.py --batch-dir output\batch              # the latest run against evaluation.md
 ```
 
-Settings are in the `ml:` section of `stream-config.yaml`: `sample_rows` (trips per service for the trip-level models, 300,000 by default; 5,000,000 on a big machine), `test_percent`, `cv_folds` (0 skips cross-validation), the tree settings, the cluster counts, the anomaly settings and the holiday list. The same `seed` gives the same metrics. On the 2-core dev machine two months with the defaults take about 25 minutes. `ml_model_metrics` is appended to on every run, so the training time can be followed as the data grows.
+Settings are in the `ml:` section of `config.yaml`: `sample_rows` (trips per service for the trip-level models, 300,000 by default; 5,000,000 on a big machine), `test_percent`, `cv_folds` (0 skips cross-validation), the tree settings, the cluster counts, the anomaly settings and the holiday list. The same `seed` gives the same metrics. On the 2-core dev machine two months with the defaults take about 25 minutes. `ml_model_metrics` is appended to on every run, so the training time can be followed as the data grows.
 
 ## 10. Dashboard
 

@@ -1,4 +1,4 @@
-"""Load settings for one producer run from stream-config.yaml, datasets.yaml and env vars.
+"""Load settings for one producer run from config.yaml, datasets.yaml and env vars.
 
 Environment variables override the YAML (empty strings count as unset):
 DATASET, CONFIG_PATH, DATASETS_PATH, KAFKA_BOOTSTRAP, DATA_DIR, MONTHS (comma list),
@@ -34,8 +34,8 @@ def _load_yaml(path):
 
 
 def default_config_path():
-    in_container = Path("/config/stream-config.yaml")
-    return in_container if in_container.exists() else HERE.parent / "stream-config.yaml"
+    in_container = Path("/config/config.yaml")
+    return in_container if in_container.exists() else HERE.parent / "config.yaml"
 
 
 @dataclass

@@ -297,7 +297,7 @@ Every significant choice in this project, the alternatives considered, and why w
 
 ## D20 — Seeded, config-driven fault injection, tagged in a header 🟡
 
-**Choice:** Quality faults come from `stream-config.yaml` profiles (`clean`, `realistic`, `messy`), are driven by a fixed random seed, and are recorded in a `fault` Kafka header.
+**Choice:** Quality faults come from `config.yaml` profiles (`clean`, `realistic`, `messy`), are driven by a fixed random seed, and are recorded in a `fault` Kafka header.
 
 **Why:** Repeatable runs make tests and reconciliation possible. Header tags let us tell injected faults from the natural ones in the data (which are substantial), without changing the message body that Spark parses.
 
@@ -375,7 +375,7 @@ Every significant choice in this project, the alternatives considered, and why w
 - *12 months:* the original proposal; about half the disk, but several catalog KPIs could not be computed.
 - *49 months (2022-01 to 2026-01):* also covers the 2022 Airport fee comparison, but roughly doubles disk again (about 80 GB) and the batch run time.
 
-**Current setting (2026-11-10):** the range in `stream-config.yaml` is set to 3 months (2025-10 to 2025-12) for development; year-over-year, the rolling 12-month average and seasonality then report "not enough history". Set `batch.start_month` back to 2024-01 for the 24-month default.
+**Current setting (2026-11-10):** the range in `config.yaml` is set to 3 months (2025-10 to 2025-12) for development; year-over-year, the rolling 12-month average and seasonality then report "not enough history". Set `batch.start_month` back to 2024-01 for the 24-month default.
 
 **Open:** disk and time. Measured on 2 real months of Yellow, Green and FHV: Silver is 56–69 bytes per row, so 24 months with HVFHV is about 72–85 GB (about 55–60 GB with zstd and a 16-character `trip_id`), and the run speed of about 1.2M rows per minute on a 2-core VM means roughly 9 hours (see `storage_requirements.md`). Decide whether to cut months, apply the reductions, or skip HVFHV for older months.
 

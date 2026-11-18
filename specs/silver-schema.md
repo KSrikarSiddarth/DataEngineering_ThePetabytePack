@@ -79,7 +79,7 @@ Written by `spark/ml_job.py` (code in `spark/ml_features.py`) to `output/batch/s
 | `pu_location_id`, `hour_start`, `ym` | Zone, hour, month (`YYYY-MM`) |
 | `trips` | Label of the demand forecast |
 | `lag_1h`, `lag_24h`, `lag_168h` | Trips of the same zone 1, 24 and 168 hours earlier (`lag_168h` is the baseline, "same hour last week") |
-| `hour`, `day_of_week`, `is_weekend`, `is_holiday` | Calendar; holidays come from `ml.holidays` in `stream-config.yaml` |
+| `hour`, `day_of_week`, `is_weekend`, `is_holiday` | Calendar; holidays come from `ml.holidays` in `config.yaml` |
 
 **`trips`**: a deterministic sample (a hash of `trip_id`, at most `ml.sample_rows` per service) of **clean** Silver trips, meaning no `dq_*` flag, for yellow, green and fhvhv (FHV has no distance or fare).
 

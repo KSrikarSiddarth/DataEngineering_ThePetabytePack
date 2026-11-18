@@ -366,7 +366,7 @@ def main(argv=None):
     wanted = set(args.models or list(MODELS) + UNSUPERVISED)
     if "anomaly" in wanted:
         wanted.add("fare")
-    spark = build_spark({"shuffle_partitions": cfg["shuffle_partitions"]})
+    spark = build_spark(cfg)
     spark.sparkContext.setLogLevel("WARN")
     gold, features_dir, out_dir = (lambda mart: spark.read.parquet(str(base / "gold" / mart))), base / "silver" / "ml_features", base / "gold"
     if not (base / "silver" / "trips").exists():

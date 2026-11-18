@@ -1,6 +1,6 @@
 """M5 batch job: TLC monthly Parquet files -> Silver -> Gold (daily, monthly and pipeline-health marts).
 
-    python batch_job.py                                   # the month range in stream-config.yaml, all datasets
+    python batch_job.py                                   # the month range in config.yaml, all datasets
     python batch_job.py --months 2026-01 --datasets yellow green
     python batch_job.py --months 2026-01 --max-records 20000 --output-dir output/check   # throwaway check run
 
@@ -206,7 +206,7 @@ def main(argv=None):
     input_dir = args.input_dir or cfg["input_dir"]
     out = Path(args.output_dir or cfg["output_dir"])
     expected = list(month_range(cfg["start_month"], cfg["end_month"]))
-    spark = build_spark({"shuffle_partitions": cfg["shuffle_partitions"]})
+    spark = build_spark(cfg)
     spark.sparkContext.setLogLevel("WARN")
     write_run_info(spark, out)
     ctx = {"specs": conf["specs"], "norms": conf["norms"], "vcfg": conf["proc"]["validation"],

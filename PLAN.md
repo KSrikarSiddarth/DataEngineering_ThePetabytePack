@@ -172,7 +172,7 @@ File patterns and column names above were **verified against the real 2026-01 fi
 - `scripts/queries/*.sql` holds the KPI queries (§6.6). `scripts/benchmark_queries.py` runs them on both engines, prints timings, and compares a query that can use partition pruning and column selection against the same query forced to scan everything.
 
 ### 6.5 Config (`.env`)
-`KAFKA_VERSION, SPARK_VERSION, SCALA_VERSION, TOPIC_INVALID, REPLAY_SPEEDUP, MAX_RECORDS, MAX_RECORDS_HVFHV` (raw topic names come from `producer/datasets.yaml`). Batch settings (`batch:` section: months range, datasets, output paths, shuffle partitions) and the `combined:` section (`cutover_date`) live in `stream-config.yaml`.
+`KAFKA_VERSION, SPARK_VERSION, SCALA_VERSION, TOPIC_INVALID, REPLAY_SPEEDUP, MAX_RECORDS, MAX_RECORDS_HVFHV` (raw topic names come from `producer/datasets.yaml`). Batch settings (`batch:` section: months range, datasets, output paths, shuffle partitions) and the `combined:` section (`cutover_date`) live in `config.yaml`.
 
 ### 6.6 KPIs
 
@@ -235,7 +235,7 @@ Bronze is not copied a second time: the Kafka topics and the downloaded files ar
 
 The stream's results are not written into the historic store. The two are joined only when queried, through views over the Gold (and Silver) tables:
 
-- **Cutover date** `combined.cutover_date` in `stream-config.yaml` (default `2026-01-01`, the first day of the streamed month). The batch range ends the month before.
+- **Cutover date** `combined.cutover_date` in `config.yaml` (default `2026-01-01`, the first day of the streamed month). The batch range ends the month before.
 - **View definition.** For each daily mart, `combined.<table>` = batch rows with date **before** the cutover, `UNION ALL` stream rows with date **on or after** it. Each date comes from exactly one side, so nothing is counted twice. The batch result is authoritative before the cutover and the stream result from the cutover on.
 - **Where.** DuckDB views created by `scripts/combined_views.py` over `output/batch/gold/*` and `output/stream/gold/*` (no data copied), and the same logic as Spark SQL temp views.
 - **Tables covered.** The daily marts that both paths build (`trips_daily`, `demand_hourly`, `zone_od_daily`, `revenue_daily`, `trip_efficiency_daily`, `hvfhv_economics_daily`, `hvfhv_service_daily`, `data_quality_daily`). Monthly, health and ML tables exist only on the batch side and are not combined.
@@ -352,7 +352,7 @@ Two parts. Both follow `specs/2_nyc_taxi_medallion_architecture.html` and `specs
 | Four schemas drift or differ from recalled column names | Verify against the real files and PDFs in M2; one schema test per dataset |
 | Streams arrive misaligned in event time, stalling the watermark | Shared simulated clock across producers; watermark advances on the slowest-moving input, so document and test it in M4 |
 | Windowed output delayed by watermark in append mode | Expected; document, and flush with a final trailing event or use `update` mode for dev |
-| 24 months of HVFHV (~500M rows, ~12 GB raw) is slow or runs out of memory in a local-mode Spark container | Process one month at a time (the job loops over months), keep shuffle partitions low, and allow a smaller range (for example 3 months) in `stream-config.yaml` for development |
+| 24 months of HVFHV (~500M rows, ~12 GB raw) is slow or runs out of memory in a local-mode Spark container | Process one month at a time (the job loops over months), keep shuffle partitions low, and allow a smaller range (for example 3 months) in `config.yaml` for development |
 | A short history range cannot answer the multi-year KPIs (year-over-year, seasonality, fee-policy before/after) | Default to 24 months; the KPI is reported as "not enough history" when the range is too short (D25). The 2022 Airport fee comparison would need data back to 2021 |
 | Disk use of raw files plus processed output | Check free space (see `storage_requirements.md`: about 72–85 GB for 24 months as built, about 55–60 GB with zstd and a shorter `trip_id`) before the download; `data/` and `output/` are gitignored |
 | A date is counted twice in the combined views, or falls in a gap between the batch range and the stream | Cutover date in one config value; each view takes one side per date; a test checks no date is on both sides and the batch range ends the month before the cutover |

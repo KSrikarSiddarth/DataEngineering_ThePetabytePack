@@ -3,7 +3,7 @@
     DATASET=green python producer.py
     python producer.py --dataset yellow --dry-run --out yellow.ndjson   # no Kafka needed
 
-Configuration comes from stream-config.yaml, producer/datasets.yaml and env vars
+Configuration comes from config.yaml, producer/datasets.yaml and env vars
 (see config.py). Exit code is 0 only if every message was delivered.
 """
 import argparse

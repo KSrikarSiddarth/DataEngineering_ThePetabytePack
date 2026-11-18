@@ -1,4 +1,4 @@
-# stream-config.yaml — single source of truth for how taxi data is streamed.
+# config.yaml — single source of truth for how taxi data is streamed.
 #
 # Who reads what:
 #   kafka, topics   -> M1  kafka-init (creates the topics)
@@ -159,6 +159,8 @@ processing:
   watermark_minutes: 10                     # Gold windows: how late an event-time hour may still be updated
   dedup_watermark_minutes: 2                # Silver: how long (ingest time) a trip_id is remembered for deduplication
   shuffle_partitions: 8
+  spark_master: local[2]                    # cores: local[N], local[*] = all, or spark://<PC-IP>:7077 (cluster)
+  driver_memory: 2g                         # keep within what WSL gets (.wslconfig)
   validation:
     expected_month: "2026-01"
     date_tolerance_days: 1                  # accepted slack around the expected month
@@ -178,6 +180,8 @@ batch:
   input_dir: /data                          # the downloaded monthly files (data/ on the host)
   output_dir: /output/batch                 # silver/, silver_invalid/, gold/ (the stream writes /output/stream)
   shuffle_partitions: 16
+  spark_master: local[2]                    # cores: local[N], local[*] = all, or spark://<PC-IP>:7077 (cluster)
+  driver_memory: 4g                         # keep within what WSL gets (.wslconfig)
 
 # ---------------------------------------------------------------------------
 # Spark ML on the batch store (consumed by M6: spark/ml_job.py). The same seed gives the same metrics.
@@ -198,6 +202,8 @@ ml:
   anomaly_quantile: 0.99                    # flag when |fare residual| is above this quantile of the training residuals
   anomaly_inject_percent: 5                 # share of holdout trips corrupted to measure recall and precision
   shuffle_partitions: 16
+  spark_master: local[2]                    # cores: local[N], local[*] = all, or spark://<PC-IP>:7077 (cluster)
+  driver_memory: 4g                         # keep within what WSL gets (.wslconfig)
   holidays: [                               # US federal holidays; the TLC files carry none. Extend for other years.
     "2024-01-01", "2024-01-15", "2024-02-19", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-10-14",
     "2024-11-11", "2024-11-28", "2024-12-25",

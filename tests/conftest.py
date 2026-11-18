@@ -16,7 +16,7 @@ from serialize import Record  # noqa: E402
 
 @pytest.fixture(scope="session")
 def stream_cfg():
-    return yaml.safe_load((ROOT / "stream-config.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="session")

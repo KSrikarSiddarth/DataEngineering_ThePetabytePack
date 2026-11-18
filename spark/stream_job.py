@@ -8,7 +8,7 @@ Stage 1 (silver): Kafka -> parse/normalize/enrich/conform -> deduplicate on trip
     <output_dir>/silver/trips (partitioned by service_type), <output_dir>/silver_invalid, <output_dir>/silver/dim_*
 Stage 2 (gold): the Silver Parquet is read back as a stream and aggregated into the eight daily marts
     (spark/gold.py) with event-time windows and a watermark: <output_dir>/gold/<mart>.
-Every query has its own checkpoint under <checkpoint_dir>. Configuration: stream-config.yaml (`processing`
+Every query has its own checkpoint under <checkpoint_dir>. Configuration: config.yaml (`processing`
 section) and producer/datasets.yaml; env vars override a few values (see load_config).
 """
 import argparse
@@ -36,7 +36,7 @@ def _first_existing(*paths):
 
 
 def load_config(env=os.environ):
-    cfg_path = _first_existing(env.get("CONFIG_PATH"), "/config/stream-config.yaml", HERE.parent / "stream-config.yaml")
+    cfg_path = _first_existing(env.get("CONFIG_PATH"), "/config/config.yaml", HERE.parent / "config.yaml")
     ds_path = _first_existing(env.get("DATASETS_PATH"), "/config/datasets.yaml", HERE.parent / "producer" / "datasets.yaml")
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     ds = yaml.safe_load(ds_path.read_text(encoding="utf-8"))
@@ -55,12 +55,14 @@ def load_config(env=os.environ):
     }
 
 
-def build_spark(proc):
+def build_spark(settings):
+    """SparkSession for a job. `settings` is the job's config.yaml section (shuffle_partitions, spark_master,
+    driver_memory); the SPARK_MASTER and SPARK_DRIVER_MEMORY environment variables override it for one-off runs."""
     return (SparkSession.builder.appName("nyc-taxi-m4")
-            .master(os.environ.get("SPARK_MASTER", "local[2]"))
-            .config("spark.driver.memory", os.environ.get("SPARK_DRIVER_MEMORY", "2g"))
+            .master(os.environ.get("SPARK_MASTER") or settings.get("spark_master", "local[2]"))
+            .config("spark.driver.memory", os.environ.get("SPARK_DRIVER_MEMORY") or settings.get("driver_memory", "2g"))
             .config("spark.sql.session.timeZone", "UTC")   # naive ISO timestamps are treated as UTC
-            .config("spark.sql.shuffle.partitions", str(proc["shuffle_partitions"]))
+            .config("spark.sql.shuffle.partitions", str(settings["shuffle_partitions"]))
             .config("spark.sql.streaming.metricsEnabled", "false")
             .getOrCreate())
 

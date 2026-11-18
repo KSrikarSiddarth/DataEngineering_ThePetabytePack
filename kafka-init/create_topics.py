@@ -1,4 +1,4 @@
-"""Create the Kafka topics declared in stream-config.yaml, then exit.
+"""Create the Kafka topics declared in config.yaml, then exit.
 
 Idempotent: topics that already exist are left alone (a warning is printed if
 their partition count differs from the config). Exits non-zero if any topic is
@@ -12,7 +12,7 @@ import yaml
 from confluent_kafka import KafkaError, KafkaException
 from confluent_kafka.admin import AdminClient, NewTopic
 
-CONFIG_PATH = os.environ.get("CONFIG_PATH", "/config/stream-config.yaml")
+CONFIG_PATH = os.environ.get("CONFIG_PATH", "/config/config.yaml")
 BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "kafka:29092")
 CONNECT_TIMEOUT_S = int(os.environ.get("CONNECT_TIMEOUT_S", "60"))
 

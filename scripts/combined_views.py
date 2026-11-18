@@ -23,8 +23,8 @@ PARTITIONED = DAILY + list(MONTHLY)          # batch Gold tables written as year
 
 
 def default_cutover():
-    """combined.cutover_date from stream-config.yaml."""
-    cfg = yaml.safe_load((ROOT / "stream-config.yaml").read_text(encoding="utf-8"))
+    """combined.cutover_date from config.yaml."""
+    cfg = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
     return str(cfg["combined"]["cutover_date"])
 
 

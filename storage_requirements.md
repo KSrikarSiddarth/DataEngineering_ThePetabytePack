@@ -4,7 +4,7 @@ How much disk the project needs, and where it goes. **Every number below is an e
 
 **What changed on 2026-11-10 (first measurement).** M5 ran on two real months of Yellow, Green and FHV (12M rows). Silver came out at **56–69 bytes per row**, about five times the source files, and 47% of a Yellow file is the 32-character `trip_id`. The Silver estimate below is therefore several times the earlier one (8–16 GB), and the 24-month plan no longer fits in 50 GB. HVFHV Silver is still extrapolated, not measured. See Section 6 for what reduces it.
 
-**Current setting.** `stream-config.yaml` is set to 3 months (2025-10 to 2025-12, `batch.start_month` and `batch.end_month`), which is the "Batch, small" scenario in Section 5 (about 22 GB in total).
+**Current setting.** `config.yaml` is set to 3 months (2025-10 to 2025-12, `batch.start_month` and `batch.end_month`), which is the "Batch, small" scenario in Section 5 (about 22 GB in total).
 
 **What changed on 2026-11-05.** The KPI catalog (`specs/3_KPI.html`) needs more than 12 months of history (year-over-year growth, seasonality, fee-policy before/after), so the default batch range is now **24 months** (D25), and the project also gains Gold marts and Spark ML outputs (M6). The previous estimate (about 25 GB) was for 12 months.
 
@@ -89,7 +89,7 @@ Measured on one real Yellow month (4.3M rows, 277 MB as written with snappy):
 With both, HVFHV Silver would be about 19–26 GB and the whole plan about 55–60 GB. Neither change is applied yet.
 
 
-- Download fewer months: set the range in `stream-config.yaml` (`batch:` section) and pass `--months` to the download script. Check which catalog KPIs then show "not enough history".
+- Download fewer months: set the range in `config.yaml` (`batch:` section) and pass `--months` to the download script. Check which catalog KPIs then show "not enough history".
 - Skip HVFHV for batch runs (`datasets` in the same section). It removes about 85% of the input and Silver, and the HVFHV KPIs and models.
 - Delete `output/` and `output/checkpoints` together when resetting (see `run.md`).
 - Run `docker system prune` to remove unused images, and `docker compose down -v` to remove Kafka data.

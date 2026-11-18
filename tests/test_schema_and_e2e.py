@@ -66,7 +66,7 @@ def test_config_profiles_are_valid(stream_cfg):
 
 def _env(tmp_path, **extra):
     env = {"DATA_DIR": str(tmp_path), "MONTHS": "2026-01", "REPLAY_SPEEDUP": "0",
-           "CONFIG_PATH": str(ROOT / "stream-config.yaml")}
+           "CONFIG_PATH": str(ROOT / "config.yaml")}
     env.update(extra)
     return env
 

@@ -21,7 +21,7 @@ from transform import DQ_FLAGS, INVALID_FIELDS, SILVER_FIELDS, process, service_
 
 DS = yaml.safe_load((ROOT / "producer" / "datasets.yaml").read_text(encoding="utf-8"))
 SPECS, NORMS = DS["datasets"], DS["normalize"]
-CFG = yaml.safe_load((ROOT / "stream-config.yaml").read_text(encoding="utf-8"))
+CFG = yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
 VCFG = CFG["processing"]["validation"]
 DATA = ROOT / "data"
 RAW_COLS = ["topic", "partition", "offset", "value"]
@@ -241,7 +241,7 @@ def real_stream(tmp_path_factory):
     items, tags, sent = [], {}, {}
     for name in SPECS:
         env = {"DATA_DIR": str(DATA), "MONTHS": "2026-01", "REPLAY_SPEEDUP": "0", "MAX_RECORDS": "1000",
-               "QUALITY_PROFILE": "messy", "CONFIG_PATH": str(ROOT / "stream-config.yaml")}
+               "QUALITY_PROFILE": "messy", "CONFIG_PATH": str(ROOT / "config.yaml")}
         out = tmp / f"{name}.ndjson"
         sent[name] = run(load_settings(name, env), NdjsonSink(out))["messages_sent"]
         for line in out.read_text(encoding="utf-8").splitlines():

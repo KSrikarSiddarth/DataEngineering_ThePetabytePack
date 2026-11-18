@@ -1,5 +1,5 @@
 """Fault injection for the stream (null fields, rule violations, duplicates, late and
-out-of-order records, malformed JSON, schema drift), driven by stream-config.yaml.
+out-of-order records, malformed JSON, schema drift), driven by config.yaml.
 
 Record-level faults change one record (`Injector.mutate`). Stream-level faults change
 delivery order or count (`Injector.stream`). Every injected fault is tagged on

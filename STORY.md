@@ -136,10 +136,10 @@ about 12 minutes). Spark Structured Streaming reads the topics and writes Silver
 
 | Problem | Concept | Where |
 |---|---|---|
-| Many producers, one broker, ordered per key | **Topics, partitions, keys.** Key = `PULocationID` keeps a zone's trips in one partition (FHV keys on `dispatching_base_num` since its zone is mostly null, D19). HVFHV gets 6 partitions, the others 3 | `stream-config.yaml`, `kafka-init/` |
+| Many producers, one broker, ordered per key | **Topics, partitions, keys.** Key = `PULocationID` keeps a zone's trips in one partition (FHV keys on `dispatching_base_num` since its zone is mostly null, D19). HVFHV gets 6 partitions, the others 3 | `config.yaml`, `kafka-init/` |
 | Trips arrive late and out of order | **Event time + watermark.** Windows are by pickup time, not arrival; a 10-minute watermark decides how late is too late | `spark/stream_job.py` |
 | Producers retry, so duplicates appear | **Idempotent processing.** `dropDuplicatesWithinWatermark` on `trip_id`, watermark on ingest time (D30) | `spark/stream_job.py` |
-| A burst could swamp Spark | **Backpressure.** `max_offsets_per_trigger: 50000` bounds each micro-batch | `stream-config.yaml` |
+| A burst could swamp Spark | **Backpressure.** `max_offsets_per_trigger: 50000` bounds each micro-batch | `config.yaml` |
 | Real feeds are dirty | **Fault injection.** Seeded, config-driven bad rows (D20) prove the pipeline catches them | `producer/faults.py` |
 | Crash mid-run | **Checkpointing.** Restart resumes from offsets with no loss and no duplicates (target S5) | `output/checkpoints/` |
 
@@ -205,9 +205,10 @@ than CPU becomes the limit.** This chapter is where the distributed-systems conc
 4. **Start the worker** (Ubuntu VM):
    `spark-class org.apache.spark.deploy.worker.Worker spark://<PC-IP>:7077 --cores 4 --memory 6g`
    The master UI at `http://<PC-IP>:8080` should now list one worker.
-5. **Point the batch job at the cluster.** `docker-compose.yml` already reads `BATCH_SPARK_MASTER`
-   (default `local[2]`):
-   `BATCH_SPARK_MASTER=spark://<PC-IP>:7077 docker compose --profile batch up spark-batch`
+5. **Point the batch job at the cluster.** In `config.yaml`, under `batch:`, set
+   `spark_master: spark://<PC-IP>:7077` (default `local[2]`) and `driver_memory`, then run
+   `docker compose --profile batch up spark-batch`. For a one-off run, the `SPARK_MASTER` environment
+   variable overrides the file.
 6. **Make the data visible to both machines.** Executors read `data/` and write `output/` themselves. Share
    the folders (SMB from Windows, mounted on the VM at the *same path*) or copy `data/` to both. Without this
    the job fails with "file not found" on whichever machine does not have the files.
@@ -332,7 +333,7 @@ Delta/Iceberg tables, and a real feed in place of the replay.
 | Plan, milestones, architecture | `PLAN.md` |
 | Every design decision and trade-off | `decisions.md` (D1–D33) |
 | Raw, Silver, Gold schemas | `specs/raw-schemas.md`, `silver-schema.md`, `gold-schema.md` |
-| Streaming config | `stream-config.yaml` |
+| Streaming config | `config.yaml` |
 | Services and profiles | `docker-compose.yml` |
 | Run it | `run.md`, `installation.md` |
 | Disk and time estimates | `storage_requirements.md` |

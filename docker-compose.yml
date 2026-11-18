@@ -9,7 +9,7 @@ name: nyc-taxi-stream
 # M2 — producers. One image, one service per dataset. Not started by default:
 #   docker compose --profile producers up producer-green
 #   MAX_RECORDS=1000 REPLAY_SPEEDUP=0 QUALITY_PROFILE=clean docker compose --profile producers up producer-yellow
-# Empty env values fall back to stream-config.yaml.
+# Empty env values fall back to config.yaml.
 x-producer: &producer
   profiles: ["producers"]
   build:
@@ -21,7 +21,7 @@ x-producer: &producer
       condition: service_completed_successfully
   environment: &producer-env
     KAFKA_BOOTSTRAP: kafka:29092
-    CONFIG_PATH: /config/stream-config.yaml
+    CONFIG_PATH: /config/config.yaml
     DATA_DIR: /data
     STATS_DIR: /output/producer-stats
     REPLAY_SPEEDUP: ${REPLAY_SPEEDUP:-}
@@ -30,7 +30,7 @@ x-producer: &producer
   volumes:
     - ./data:/data:ro
     - ./output:/output
-    - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+    - ${STREAM_CONFIG:-./config.yaml}:/config/config.yaml:ro
   restart: "no"
 
 services:
@@ -53,7 +53,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # topics come from stream-config.yaml only
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"   # topics come from config.yaml only
       KAFKA_HEAP_OPTS: "-Xms512m -Xmx1g"
     volumes:
       - kafka-data:/var/lib/kafka/data
@@ -74,10 +74,10 @@ services:
       kafka:
         condition: service_healthy
     environment:
-      CONFIG_PATH: /config/stream-config.yaml
+      CONFIG_PATH: /config/config.yaml
       KAFKA_BOOTSTRAP: kafka:29092
     volumes:
-      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ${STREAM_CONFIG:-./config.yaml}:/config/config.yaml:ro
     restart: "no"
 
   kafka-ui:
@@ -108,14 +108,13 @@ services:
         condition: service_completed_successfully
     environment:
       KAFKA_BOOTSTRAP: kafka:29092
-      CONFIG_PATH: /config/stream-config.yaml
+      CONFIG_PATH: /config/config.yaml
       DATASETS_PATH: /config/datasets.yaml
       TRIGGER_MODE: ${TRIGGER_MODE:-}
-      SPARK_DRIVER_MEMORY: ${SPARK_DRIVER_MEMORY:-2g}
     volumes:
       - ./data:/data:ro
       - ./output:/output
-      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ${STREAM_CONFIG:-./config.yaml}:/config/config.yaml:ro
       - ./producer/datasets.yaml:/config/datasets.yaml:ro
     restart: "no"
 
@@ -132,14 +131,12 @@ services:
     ports:
       - "4040:4040"   # Spark UI while the job runs: http://localhost:4040
     environment:
-      CONFIG_PATH: /config/stream-config.yaml
+      CONFIG_PATH: /config/config.yaml
       DATASETS_PATH: /config/datasets.yaml
-      SPARK_MASTER: ${BATCH_SPARK_MASTER:-local[2]}
-      SPARK_DRIVER_MEMORY: ${BATCH_DRIVER_MEMORY:-4g}
     volumes:
       - ./data:/data:ro
       - ./output:/output
-      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ${STREAM_CONFIG:-./config.yaml}:/config/config.yaml:ro
       - ./producer/datasets.yaml:/config/datasets.yaml:ro
     restart: "no"
 
@@ -152,14 +149,12 @@ services:
     profiles: ["ml"]
     command: ["python", "-u", "ml_job.py"]
     environment:
-      CONFIG_PATH: /config/stream-config.yaml
+      CONFIG_PATH: /config/config.yaml
       DATASETS_PATH: /config/datasets.yaml
-      SPARK_MASTER: ${ML_SPARK_MASTER:-local[2]}
-      SPARK_DRIVER_MEMORY: ${ML_DRIVER_MEMORY:-4g}
     volumes:
       - ./data:/data:ro
       - ./output:/output
-      - ${STREAM_CONFIG:-./stream-config.yaml}:/config/stream-config.yaml:ro
+      - ${STREAM_CONFIG:-./config.yaml}:/config/config.yaml:ro
       - ./producer/datasets.yaml:/config/datasets.yaml:ro
     restart: "no"
 
