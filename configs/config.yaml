@@ -1,0 +1,162 @@
+# NYC MobilityPulse - central configuration.
+# Every value can be overridden with an environment variable of the form
+# MP__SECTION__KEY (double underscore separated), e.g. MP__SPARK__SHUFFLE_PARTITIONS=64.
+# The data root can be relocated with MOBILITYPULSE_DATA_DIR (recommended when the
+# project folder lives on a cloud-synced drive such as OneDrive/Dropbox).
+
+project:
+  name: nyc-mobilitypulse
+  timezone: America/New_York
+
+paths:
+  data_dir: ~/mobilitypulse_data # kept outside OneDrive; relative paths resolve from project root
+  raw: "{data_dir}/raw"
+  bronze: "{data_dir}/bronze"
+  silver: "{data_dir}/silver"
+  gold: "{data_dir}/gold"
+  quarantine: "{data_dir}/quarantine"
+  models: "{data_dir}/models"
+  state: "{data_dir}/state"       # pipeline_state.parquet: per-month stage status for incremental runs
+  checkpoints: "{data_dir}/checkpoints"
+  serving_db: "{data_dir}/serving/mobilitypulse.db"
+  stream_out: "{data_dir}/gold/stream_zone_metrics"
+  stream_dlq: "{data_dir}/quarantine/stream_dlq"
+  bench: "{data_dir}/bench"
+  spark_events: "{data_dir}/spark-events"
+  results: results
+  logs: logs
+
+sources:
+  tlc_base_url: https://d37ci6vzurychx.cloudfront.net/trip-data
+  tlc_dataset: yellow_tripdata
+  zones_url: https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv
+  # NOAA ISD "global-hourly" CSV (moved from ncei.noaa.gov to the AWS Open Data bucket in 2026);
+  # station 725053-94728 = New York Central Park (USW00094728)
+  noaa_base_url: https://noaa-global-hourly-pds.s3.amazonaws.com
+  noaa_station: "72505394728"
+
+# Named input sizes used by the scaling experiment (requirement 3.1).
+datasets:
+  small: ["2024-01"]
+  medium: ["2024-01", "2024-02", "2024-03"]
+  large: ["2024-01", "2024-02", "2024-03", "2024-04", "2024-05", "2024-06"]
+  # Default months processed by `run_pipeline.py --stage all` when --months is not given.
+  default: ["2024-01", "2024-02", "2024-03"]
+
+spark:
+  app_name: NYC-MobilityPulse
+  master: local[*]
+  driver_memory: 6g
+  shuffle_partitions: 32
+  adaptive_enabled: true
+  broadcast_threshold_mb: 10
+  ui_port: 4040
+  ui_enabled: true
+  event_log: false
+  log_level: WARN
+
+quality:
+  min_trip_minutes: 1
+  max_trip_minutes: 360
+  max_trip_miles: 200
+  max_fare: 1000
+  max_passengers: 9
+  min_location_id: 1
+  max_location_id: 263          # 264/265 are "Unknown"/"Outside of NYC" in the zone lookup
+  max_speed_mph: 100
+  alert_reject_rate_pct: 8.0    # gold.data_quality_daily flags a day when more than this share of its rows is rejected
+
+features:
+  lags: [1, 2, 3, 23, 24, 168]
+  rolling_windows: [3, 24, 168]
+  min_zone_trips: 500           # zones below this total in the training range are excluded from ML
+
+ml:
+  label_col: label_next_hour
+  test_days: 14                 # last N days of the feature range are held out (time-based split)
+  validation_days: 7            # N days immediately before the test period
+  mape_min_actual: 10           # MAPE only over zone-hours with actual >= this
+  peak_hours: [7, 8, 9, 16, 17, 18, 19]
+  seed: 42
+  models: [linear_regression, random_forest, gbt]
+  log_target_models: [random_forest, gbt]   # fit on log1p(label): errors scale with volume
+  ensemble: true                # validation-weighted blend of the two best models, added as model "ensemble"
+  tuning:
+    enabled: false              # validation-only GBT grid search (Plan 4.5); multiplies GBT fit time by len(gbt_grid)
+    gbt_grid:                   # each trial is fitted on train and scored on validation MAE; test is never used
+      - {max_depth: 6, max_iter: 150, step_size: 0.1}
+      - {max_depth: 8, max_iter: 150, step_size: 0.1}
+      - {max_depth: 8, max_iter: 300, step_size: 0.05}
+      - {max_depth: 10, max_iter: 150, step_size: 0.1}
+  gbt:
+    max_iter: 150
+    max_depth: 8
+    step_size: 0.1
+    subsampling_rate: 0.8
+  random_forest:
+    num_trees: 60
+    max_depth: 10
+  linear_regression:
+    reg_param: 0.01
+    elastic_net: 0.0
+
+anomaly:
+  rule_z_threshold: 3.5         # robust z-score (MAD) threshold for rule-based labels
+  rule_min_expected: 5          # ignore near-empty zone-hours when labelling
+  residual_z_threshold: 3.0     # minimum threshold on the standardised forecast residual
+  residual_alert_rate: 0.005    # threshold calibrated on validation so ~0.5 % of zone-hours alert (null = fixed)
+  residual_min_sigma: 1.0       # floor for per-zone residual std (avoids divide-by-~0)
+  kmeans_k: 8
+  kmeans_quantile: 0.995
+  injection_fraction: 0.02      # fraction of eligible test rows receiving a synthetic spike/drop
+  injection_min_expected: 20    # only inject where the forecast is >= this (operationally relevant)
+  spike_factor: 3.0
+  drop_factor: 0.2
+  injection_seed: 7
+
+kafka:
+  bootstrap_servers: localhost:9092
+  topic: taxi-trips
+  dlq_topic: taxi-trips-dlq
+  partitions: 4
+  replication_factor: 1
+
+producer:
+  events_per_second: 2000
+  speedup: 0                    # 0 = rate-limited by events_per_second; >0 = replay at N x real time
+  malformed_fraction: 0.01
+  max_events: 200000
+  replay_month: "2024-01"
+
+streaming:
+  window: 1 hour
+  slide: 15 minutes
+  watermark: 2 hours
+  trigger: 5 seconds
+  max_offsets_per_trigger: 50000
+  starting_offsets: earliest
+  shuffle_partitions: 8         # state-store partitions; fixed once a checkpoint exists
+  run_tag: default              # tags rows in results/stream/*.csv so benchmark trials can be separated
+  kafka_package: org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3
+
+serving:
+  api_host: 127.0.0.1
+  api_port: 8000
+  recent_days: 30
+
+benchmark:
+  repetitions: 3
+  partition_values: [8, 16, 32, 64, 128, 256]
+  stream_warmup_s: 60
+  stream_trial_s: 600
+  stream_sweep_trial_s: 120
+  stream_rates: [1000, 2000, 5000, 10000, 15000, 20000]
+  stream_partitions: [1, 2, 4, 8]
+  partition_trial_rate: 10000
+
+sample:
+  months: ["2024-01", "2024-02"]
+  active_zones: 40
+  mean_trips_per_zone_hour: 8.0
+  bad_row_fraction: 0.03
+  seed: 42

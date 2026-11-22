@@ -1,0 +1,40 @@
+== Physical Plan ==
+* HashAggregate (6)
++- Exchange (5)
+   +- * HashAggregate (4)
+      +- * Project (3)
+         +- * ColumnarToRow (2)
+            +- Scan parquet  (1)
+
+
+(1) Scan parquet 
+Output [6]: [pickup_zone_id#190, trip_distance#195, total_amount#199, duration_min#204, pickup_hour#209, pickup_date#213]
+Batched: true
+Location: InMemoryFileIndex [file:/home/l2m-rail/mobilitypulse_sample/silver/trips_clean]
+ReadSchema: struct<pickup_zone_id:int,trip_distance:double,total_amount:double,duration_min:double,pickup_hour:timestamp>
+
+(2) ColumnarToRow [codegen id : 1]
+Input [6]: [pickup_zone_id#190, trip_distance#195, total_amount#199, duration_min#204, pickup_hour#209, pickup_date#213]
+
+(3) Project [codegen id : 1]
+Output [5]: [pickup_zone_id#190, trip_distance#195, total_amount#199, duration_min#204, pickup_hour#209]
+Input [6]: [pickup_zone_id#190, trip_distance#195, total_amount#199, duration_min#204, pickup_hour#209, pickup_date#213]
+
+(4) HashAggregate [codegen id : 1]
+Input [5]: [pickup_zone_id#190, trip_distance#195, total_amount#199, duration_min#204, pickup_hour#209]
+Keys [2]: [pickup_zone_id#190, pickup_hour#209]
+Functions [5]: [partial_count(1), partial_avg(trip_distance#195), partial_avg(duration_min#204), partial_avg(total_amount#199), partial_sum(total_amount#199)]
+Aggregate Attributes [8]: [count#345L, sum#346, count#347L, sum#348, count#349L, sum#350, count#351L, sum#352]
+Results [10]: [pickup_zone_id#190, pickup_hour#209, count#353L, sum#354, count#355L, sum#356, count#357L, sum#358, count#359L, sum#360]
+
+(5) Exchange
+Input [10]: [pickup_zone_id#190, pickup_hour#209, count#353L, sum#354, count#355L, sum#356, count#357L, sum#358, count#359L, sum#360]
+Arguments: hashpartitioning(pickup_zone_id#190, pickup_hour#209, 32), ENSURE_REQUIREMENTS, [plan_id=693]
+
+(6) HashAggregate [codegen id : 2]
+Input [10]: [pickup_zone_id#190, pickup_hour#209, count#353L, sum#354, count#355L, sum#356, count#357L, sum#358, count#359L, sum#360]
+Keys [2]: [pickup_zone_id#190, pickup_hour#209]
+Functions [5]: [count(1), avg(trip_distance#195), avg(duration_min#204), avg(total_amount#199), sum(total_amount#199)]
+Aggregate Attributes [5]: [count(1)#296L, avg(trip_distance#195)#298, avg(duration_min#204)#300, avg(total_amount#199)#302, sum(total_amount#199)#304]
+Results [7]: [pickup_zone_id#190 AS zone_id#269, pickup_hour#209 AS window_start#270, count(1)#296L AS trip_count#297L, avg(trip_distance#195)#298 AS avg_trip_distance#299, avg(duration_min#204)#300 AS avg_duration_min#301, avg(total_amount#199)#302 AS avg_fare#303, sum(total_amount#199)#304 AS total_revenue#305]
+

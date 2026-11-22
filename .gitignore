@@ -1,3 +1,27 @@
+# data never goes to git (lives in MOBILITYPULSE_DATA_DIR, default ~/mobilitypulse_data)
+data/
+logs/
+spark-warehouse/
+metastore_db/
+derby.log
+*.crc
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+
+# generated results that are large or machine-specific
+results/stream/*.csv
+results/tests/
+
+.DS_Store
+.ipynb_checkpoints/
+
 # Data
 data/
 

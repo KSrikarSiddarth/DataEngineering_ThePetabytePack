@@ -1,0 +1,7 @@
+experiment,variant,rep,seconds,jobs,stages,tasks,shuffle_read_bytes,shuffle_write_bytes,spill_bytes,input_bytes
+e3_join,broadcast,1,16.494,4,4,45,1241265085,1241265085,0,810470943
+e3_join,broadcast,2,9.151,4,4,45,1241265085,1241265085,0,810470943
+e3_join,broadcast,3,8.832,4,4,45,1241265085,1241265085,0,810470943
+e3_join,sort_merge,1,15.999,,,,,,,
+e3_join,sort_merge,2,16.202,6.0,6.0,87.0,3581663287.0,3581663287.0,0.0,810470943.0
+e3_join,sort_merge,3,17.065,6.0,6.0,87.0,3581663287.0,3581663287.0,0.0,810470943.0

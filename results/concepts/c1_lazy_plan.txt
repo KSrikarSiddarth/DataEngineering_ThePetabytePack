@@ -1,0 +1,92 @@
+== Physical Plan ==
+AdaptiveSparkPlan (15)
++- Sort (14)
+   +- Exchange (13)
+      +- HashAggregate (12)
+         +- Exchange (11)
+            +- HashAggregate (10)
+               +- Project (9)
+                  +- BroadcastHashJoin LeftOuter BuildRight (8)
+                     :- Project (3)
+                     :  +- Filter (2)
+                     :     +- Scan parquet  (1)
+                     +- BroadcastExchange (7)
+                        +- Project (6)
+                           +- Filter (5)
+                              +- Scan parquet  (4)
+
+
+(1) Scan parquet 
+Output [5]: [pickup_zone_id#1, trip_distance#6, total_amount#10, hour_of_day#22, pickup_date#24]
+Batched: true
+Location: InMemoryFileIndex [file:/home/l2m-rail/mobilitypulse_sample/silver/trips_clean]
+PushedFilters: [IsNotNull(trip_distance), GreaterThan(trip_distance,0.5)]
+ReadSchema: struct<pickup_zone_id:int,trip_distance:double,total_amount:double,hour_of_day:int>
+
+(2) Filter
+Input [5]: [pickup_zone_id#1, trip_distance#6, total_amount#10, hour_of_day#22, pickup_date#24]
+Condition : (isnotnull(trip_distance#6) AND (trip_distance#6 > 0.5))
+
+(3) Project
+Output [3]: [pickup_zone_id#1, hour_of_day#22, (total_amount#10 / trip_distance#6) AS fare_per_mile#61]
+Input [5]: [pickup_zone_id#1, trip_distance#6, total_amount#10, hour_of_day#22, pickup_date#24]
+
+(4) Scan parquet 
+Output [2]: [zone_id#50, borough#51]
+Batched: true
+Location: InMemoryFileIndex [file:/home/l2m-rail/mobilitypulse_sample/bronze/taxi_zones]
+PushedFilters: [IsNotNull(zone_id)]
+ReadSchema: struct<zone_id:int,borough:string>
+
+(5) Filter
+Input [2]: [zone_id#50, borough#51]
+Condition : isnotnull(zone_id#50)
+
+(6) Project
+Output [2]: [zone_id#50 AS pickup_zone_id#88, borough#51 AS zone_borough#89]
+Input [2]: [zone_id#50, borough#51]
+
+(7) BroadcastExchange
+Input [2]: [pickup_zone_id#88, zone_borough#89]
+Arguments: HashedRelationBroadcastMode(List(cast(input[0, int, true] as bigint)),false), [plan_id=35]
+
+(8) BroadcastHashJoin
+Left keys [1]: [pickup_zone_id#1]
+Right keys [1]: [pickup_zone_id#88]
+Join type: LeftOuter
+Join condition: None
+
+(9) Project
+Output [3]: [hour_of_day#22, fare_per_mile#61, zone_borough#89]
+Input [5]: [pickup_zone_id#1, hour_of_day#22, fare_per_mile#61, pickup_zone_id#88, zone_borough#89]
+
+(10) HashAggregate
+Input [3]: [hour_of_day#22, fare_per_mile#61, zone_borough#89]
+Keys [2]: [zone_borough#89, hour_of_day#22]
+Functions [2]: [partial_avg(fare_per_mile#61), partial_count(1)]
+Aggregate Attributes [3]: [sum#155, count#156L, count#157L]
+Results [5]: [zone_borough#89, hour_of_day#22, sum#158, count#159L, count#160L]
+
+(11) Exchange
+Input [5]: [zone_borough#89, hour_of_day#22, sum#158, count#159L, count#160L]
+Arguments: hashpartitioning(zone_borough#89, hour_of_day#22, 32), ENSURE_REQUIREMENTS, [plan_id=40]
+
+(12) HashAggregate
+Input [5]: [zone_borough#89, hour_of_day#22, sum#158, count#159L, count#160L]
+Keys [2]: [zone_borough#89, hour_of_day#22]
+Functions [2]: [avg(fare_per_mile#61), count(1)]
+Aggregate Attributes [2]: [avg(fare_per_mile#61)#147, count(1)#149L]
+Results [4]: [zone_borough#89, hour_of_day#22, avg(fare_per_mile#61)#147 AS avg_fpm#148, count(1)#149L AS trips#150L]
+
+(13) Exchange
+Input [4]: [zone_borough#89, hour_of_day#22, avg_fpm#148, trips#150L]
+Arguments: rangepartitioning(trips#150L DESC NULLS LAST, 32), ENSURE_REQUIREMENTS, [plan_id=43]
+
+(14) Sort
+Input [4]: [zone_borough#89, hour_of_day#22, avg_fpm#148, trips#150L]
+Arguments: [trips#150L DESC NULLS LAST], true, 0
+
+(15) AdaptiveSparkPlan
+Output [4]: [zone_borough#89, hour_of_day#22, avg_fpm#148, trips#150L]
+Arguments: isFinalPlan=false
+

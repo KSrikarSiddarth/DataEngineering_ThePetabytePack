@@ -1,0 +1,19 @@
+== Physical Plan ==
+Exchange (3)
++- * ColumnarToRow (2)
+   +- Scan parquet  (1)
+
+
+(1) Scan parquet 
+Output [25]: [dropoff_zone_id#189, pickup_zone_id#190, vendor_id#191, pickup_ts#192, dropoff_ts#193, passenger_count#194, trip_distance#195, ratecode_id#196, payment_type#197, fare_amount#198, total_amount#199, record_id#200, source_file#201, ingested_at#202, source_month#203, duration_min#204, speed_mph#205, pickup_borough#206, pickup_zone_name#207, dropoff_borough#208, pickup_hour#209, dropoff_hour#210, hour_of_day#211, day_of_week#212, pickup_date#213]
+Batched: true
+Location: InMemoryFileIndex [file:/home/l2m-rail/mobilitypulse_sample/silver/trips_clean]
+ReadSchema: struct<dropoff_zone_id:int,pickup_zone_id:int,vendor_id:int,pickup_ts:timestamp,dropoff_ts:timestamp,passenger_count:double,trip_distance:double,ratecode_id:int,payment_type:int,fare_amount:double,total_amount:double,record_id:string,source_file:string,ingested_at:timestamp,source_month:string,duration_min:double,speed_mph:double,pickup_borough:string,pickup_zone_name:string,dropoff_borough:string,pickup_hour:timestamp,dropoff_hour:timestamp,hour_of_day:int,day_of_week:int>
+
+(2) ColumnarToRow [codegen id : 1]
+Input [25]: [dropoff_zone_id#189, pickup_zone_id#190, vendor_id#191, pickup_ts#192, dropoff_ts#193, passenger_count#194, trip_distance#195, ratecode_id#196, payment_type#197, fare_amount#198, total_amount#199, record_id#200, source_file#201, ingested_at#202, source_month#203, duration_min#204, speed_mph#205, pickup_borough#206, pickup_zone_name#207, dropoff_borough#208, pickup_hour#209, dropoff_hour#210, hour_of_day#211, day_of_week#212, pickup_date#213]
+
+(3) Exchange
+Input [25]: [dropoff_zone_id#189, pickup_zone_id#190, vendor_id#191, pickup_ts#192, dropoff_ts#193, passenger_count#194, trip_distance#195, ratecode_id#196, payment_type#197, fare_amount#198, total_amount#199, record_id#200, source_file#201, ingested_at#202, source_month#203, duration_min#204, speed_mph#205, pickup_borough#206, pickup_zone_name#207, dropoff_borough#208, pickup_hour#209, dropoff_hour#210, hour_of_day#211, day_of_week#212, pickup_date#213]
+Arguments: hashpartitioning(pickup_zone_id#190, 32), REPARTITION_BY_NUM, [plan_id=885]
+

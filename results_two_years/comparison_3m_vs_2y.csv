@@ -1,0 +1,24 @@
+id,area,metric,target,three_months,status_3m,two_years,status_2y
+M1a,Forecast,Best-model MAE improvement vs seasonal-naive,>= 20,19.931194134616334,FAIL,31.4759684232353,PASS
+M1b,Forecast,Best-model MAE improvement vs persistence,>= 30,38.564755432572596,PASS,40.05480616169398,PASS
+M2,Forecast,MAE,<= 6.0,4.760166099557838,PASS,6.573117137215794,FAIL
+M3,Forecast,RMSE,<= 12.0,12.110591357983823,FAIL,14.297762227457726,FAIL
+M4,Forecast,WAPE,<= 20,16.511961523531603,PASS,15.266282338927775,PASS
+M5,Forecast,MAPE (actual >= 10),<= 25,19.703822191071787,PASS,19.50391951877817,PASS
+M6,Forecast,R squared,>= 0.9,0.9659674117418144,PASS,0.9648796909095058,PASS
+M7,Forecast,GBT MAE improvement vs Linear Regression,>= 10,-9.64161808506082,FAIL,7.61513883873082,FAIL
+M8,Forecast,Worst major-borough WAPE,<= 35,111.87651868707594,FAIL,81.85187777646432,FAIL
+M9,Forecast,Weekday peak-hour WAPE,<= 22,14.160307613531735,PASS,12.681263336259551,PASS
+A1,Anomaly,Recall on injected anomalies (residual detector),>= 0.8,0.9011406844106464,PASS,0.8943396226415095,PASS
+A2,Anomaly,Precision on injected anomalies,>= 0.7,0.6620111731843575,FAIL,0.427797833935018,FAIL
+A3,Anomaly,F1 on injected anomalies,>= 0.75,0.7632850241545894,PASS,0.5787545787545788,FAIL
+A4a,Anomaly,Precision vs MAD rule labels (real data),>= 0.6,0.6845238095238095,PASS,0.29238329238329236,FAIL
+A4b,Anomaly,Recall vs MAD rule labels (real data),>= 0.6,0.09729272419627749,FAIL,0.36503067484662577,FAIL
+A5,Anomaly,Alert rate on un-injected test data,<= 1.0,0.7786954960403712,PASS,1.718242193019641,FAIL
+O1,ML ops,GBT training time (medium),<= 15,2.231270663200606,PASS,10.083542157349985,PASS
+O2,ML ops,Batch inference throughput,>= 100000,30448.871089529046,FAIL,15598.321452397387,FAIL
+O3,ML ops,Feature build time (medium),<= 10,0.05664129723324247,PASS,0.49448551608332614,PASS
+D1,Data quality,Max reconciliation diff (input - valid - rejected),== 0,0.0,PASS,0.0,PASS
+D2,Data quality,Max monthly rejection rate,<= 8,4.771,PASS,6.229,PASS
+D3,Data quality,Duplicate trips in silver,== 0,0.0,PASS,0.0,PASS
+D3b,Data quality,Zone-hour demand vs silver trip reconciliation diff,== 0,0.0,PASS,0.0,PASS
