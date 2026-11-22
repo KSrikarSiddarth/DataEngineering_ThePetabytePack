@@ -1,0 +1,5 @@
+query,seconds,exchanges_in_plan,stages,tasks,shuffle_write_mb,shuffle_read_mb,type
+narrow_only,0.204,0,1,15,0.0,0.0,narrow
+wide_groupby,0.499,1,2,47,2.21,2.21,wide
+wide_groupby_sort,0.435,2,4,98,1.44,2.19,wide
+wide_repartition,0.683,1,2,47,69.28,69.28,wide

@@ -1,0 +1,13 @@
+question,layer,rep,seconds,stages,tasks,input_mb,shuffle_mb,answers_match
+top10_zones_one_day,silver_scan,1,0.0585,2,2,0.08,0.002,True
+top10_zones_one_day,silver_scan,2,0.0549,2,2,0.08,0.002,True
+top10_zones_one_day,silver_scan,3,0.0503,2,2,0.08,0.002,True
+top10_zones_one_day,gold_lookup,1,0.0833,3,3,0.017,0.001,True
+top10_zones_one_day,gold_lookup,2,0.0579,3,3,0.017,0.001,True
+top10_zones_one_day,gold_lookup,3,0.0646,3,3,0.017,0.001,True
+trips_by_borough_month,silver_scan,1,0.1143,2,16,6.808,0.013,True
+trips_by_borough_month,silver_scan,2,0.0884,2,16,6.808,0.013,True
+trips_by_borough_month,silver_scan,3,0.1215,2,16,6.808,0.013,True
+trips_by_borough_month,gold_lookup,1,0.0264,1,1,0.005,0.0,True
+trips_by_borough_month,gold_lookup,2,0.0327,1,1,0.005,0.0,True
+trips_by_borough_month,gold_lookup,3,0.0317,1,1,0.005,0.0,True
