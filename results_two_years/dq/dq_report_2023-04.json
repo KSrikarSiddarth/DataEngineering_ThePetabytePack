@@ -1,0 +1,31 @@
+{
+  "month": "2023-04",
+  "rejects_by_reason": {
+    "INVALID_ZONE": 50705,
+    "NEGATIVE_DURATION": 91,
+    "DISTANCE_OUT_OF_RANGE": 14203,
+    "DURATION_OUT_OF_RANGE": 39683,
+    "SPEED_IMPLAUSIBLE": 119,
+    "FARE_OUT_OF_RANGE": 23330,
+    "OUTSIDE_SOURCE_MONTH": 95
+  },
+  "valid_rows": 3160024,
+  "input_rows": 3288250,
+  "null_counts": {
+    "pickup_ts": 0,
+    "dropoff_ts": 0,
+    "pickup_zone_id": 0,
+    "dropoff_zone_id": 0,
+    "passenger_count": 90690,
+    "trip_distance": 0,
+    "total_amount": 0,
+    "payment_type": 0,
+    "ratecode_id": 90690
+  },
+  "rejected_rows": 128226,
+  "duplicates": 0,
+  "written_valid_rows": 3160024,
+  "written_rejected_rows": 128226,
+  "reconciliation_diff": 0,
+  "reject_rate_pct": 3.9
+}

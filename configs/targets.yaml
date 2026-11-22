@@ -1,0 +1,61 @@
+# Evaluation targets (Plan.md section 6). Fixed before results are seen.
+# Each target compares the measurement `key` (from results/measurements.json) with `threshold` using `op`.
+# Edit thresholds here only; the scorecard (make scorecard) re-evaluates without code changes.
+
+targets:
+  # ---------------- Streaming latency and throughput ----------------
+  - {id: S1, area: Streaming, metric: "End-to-end latency p50 @ 2,000 ev/s", key: stream.latency_p50_s, op: "<=", threshold: 5, unit: s}
+  - {id: S2, area: Streaming, metric: "End-to-end latency p95 @ 2,000 ev/s", key: stream.latency_p95_s, op: "<=", threshold: 10, unit: s}
+  - {id: S3, area: Streaming, metric: "End-to-end latency p99 @ 2,000 ev/s", key: stream.latency_p99_s, op: "<=", threshold: 15, unit: s}
+  - {id: S4, area: Streaming, metric: "Micro-batches finishing within trigger interval", key: stream.batches_within_trigger_pct, op: ">=", threshold: 95, unit: "%"}
+  - {id: S5, area: Streaming, metric: "Max sustained processing rate (no lag growth)", key: stream.max_sustained_eps, op: ">=", threshold: 10000, unit: ev/s}
+  - {id: S6, area: Streaming, metric: "Kafka backlog p95 after warm-up @ 2,000 ev/s", key: stream.lag_p95_events, op: "<=", threshold: 10000, unit: events}
+  - {id: S7, area: Streaming, metric: "p95 latency reduction, 4 vs 1 Kafka partitions @ 10k ev/s", key: stream.p95_reduction_4v1_pct, op: ">=", threshold: 30, unit: "%"}
+  - {id: S8, area: Streaming, metric: "Checkpoint recovery time (kill -> first committed batch)", key: stream.recovery_s, op: "<=", threshold: 30, unit: s}
+  - {id: S9, area: Streaming, metric: "Window counts match after restart", key: stream.recovery_match_pct, op: ">=", threshold: 100, unit: "%"}
+  - {id: S10, area: Streaming, metric: "Injected malformed events routed to DLQ", key: stream.dlq_routed_pct, op: ">=", threshold: 100, unit: "%"}
+  - {id: S10b, area: Streaming, metric: "Events unaccounted for (sent - processed - DLQ)", key: stream.events_unaccounted, op: "==", threshold: 0, unit: events}
+  - {id: S11, area: Streaming, metric: "Stream vs batch agreement on closed hourly windows", key: stream.batch_agreement_pct, op: ">=", threshold: 100, unit: "%"}
+
+  # ---------------- Forecast accuracy (test split) ----------------
+  - {id: M1a, area: Forecast, metric: "Best-model MAE improvement vs seasonal-naive", key: ml.mae_improvement_vs_seasonal_pct, op: ">=", threshold: 20, unit: "%"}
+  - {id: M1b, area: Forecast, metric: "Best-model MAE improvement vs persistence", key: ml.mae_improvement_vs_persistence_pct, op: ">=", threshold: 30, unit: "%"}
+  - {id: M2, area: Forecast, metric: "MAE", key: ml.best_mae, op: "<=", threshold: 6.0, unit: trips/zone-hour}
+  - {id: M3, area: Forecast, metric: "RMSE", key: ml.best_rmse, op: "<=", threshold: 12.0, unit: trips/zone-hour}
+  - {id: M4, area: Forecast, metric: "WAPE", key: ml.best_wape_pct, op: "<=", threshold: 20, unit: "%"}
+  - {id: M5, area: Forecast, metric: "MAPE (actual >= 10)", key: ml.best_mape_pct, op: "<=", threshold: 25, unit: "%"}
+  - {id: M6, area: Forecast, metric: "R squared", key: ml.best_r2, op: ">=", threshold: 0.90, unit: ""}
+  - {id: M7, area: Forecast, metric: "GBT MAE improvement vs Linear Regression", key: ml.gbt_vs_lr_mae_improvement_pct, op: ">=", threshold: 10, unit: "%"}
+  - {id: M8, area: Forecast, metric: "Worst major-borough WAPE", key: ml.worst_borough_wape_pct, op: "<=", threshold: 35, unit: "%"}
+  - {id: M9, area: Forecast, metric: "Weekday peak-hour WAPE", key: ml.peak_wape_pct, op: "<=", threshold: 22, unit: "%"}
+
+  # ---------------- Anomaly detection ----------------
+  - {id: A1, area: Anomaly, metric: "Recall on injected anomalies (residual detector)", key: anomaly.injected_recall, op: ">=", threshold: 0.80, unit: ""}
+  - {id: A2, area: Anomaly, metric: "Precision on injected anomalies", key: anomaly.injected_precision, op: ">=", threshold: 0.70, unit: ""}
+  - {id: A3, area: Anomaly, metric: "F1 on injected anomalies", key: anomaly.injected_f1, op: ">=", threshold: 0.75, unit: ""}
+  - {id: A4a, area: Anomaly, metric: "Precision vs MAD rule labels (real data)", key: anomaly.rule_precision, op: ">=", threshold: 0.60, unit: ""}
+  - {id: A4b, area: Anomaly, metric: "Recall vs MAD rule labels (real data)", key: anomaly.rule_recall, op: ">=", threshold: 0.60, unit: ""}
+  - {id: A5, area: Anomaly, metric: "Alert rate on un-injected test data", key: anomaly.alert_rate_pct, op: "<=", threshold: 1.0, unit: "%"}
+
+  # ---------------- ML operational ----------------
+  - {id: O1, area: ML ops, metric: "GBT training time (medium)", key: ml.gbt_train_min, op: "<=", threshold: 15, unit: min}
+  - {id: O2, area: ML ops, metric: "Batch inference throughput", key: ml.inference_rows_per_s, op: ">=", threshold: 100000, unit: rows/s}
+  - {id: O3, area: ML ops, metric: "Feature build time (medium)", key: features.build_min, op: "<=", threshold: 10, unit: min}
+
+  # ---------------- Batch performance and scalability ----------------
+  - {id: B1, area: Batch, metric: "Small dataset bronze -> features wall-clock", key: batch.small_e2e_min, op: "<=", threshold: 3, unit: min}
+  - {id: B2, area: Batch, metric: "Bronze -> silver throughput (medium)", key: batch.bronze_to_silver_rps, op: ">=", threshold: 250000, unit: rows/s}
+  - {id: B3, area: Batch, metric: "Worst data-scaling efficiency (S->M, M->L)", key: batch.scaling_efficiency_min, op: ">=", threshold: 0.75, unit: ""}
+  - {id: B4, area: Batch, metric: "Broadcast vs sort-merge join speedup", key: batch.broadcast_speedup, op: ">=", threshold: 1.2, unit: x}
+  - {id: B5, area: Batch, metric: "Cached vs uncached reuse speedup", key: batch.cache_speedup, op: ">=", threshold: 1.5, unit: x}
+  - {id: B6, area: Batch, metric: "Best shuffle-partition count (informational)", key: batch.best_partitions, op: "info", threshold: null, unit: partitions}
+  - {id: B7, area: Batch, metric: "Parquet vs CSV scan speedup", key: batch.parquet_vs_csv_speedup, op: ">=", threshold: 3, unit: x}
+
+  # ---------------- Data quality and reproducibility ----------------
+  - {id: D1, area: Data quality, metric: "Max reconciliation diff (input - valid - rejected)", key: dq.max_reconciliation_diff, op: "==", threshold: 0, unit: rows}
+  - {id: D2, area: Data quality, metric: "Max monthly rejection rate", key: dq.max_reject_rate_pct, op: "<=", threshold: 8, unit: "%"}
+  - {id: D3, area: Data quality, metric: "Duplicate trips in silver", key: dq.silver_duplicates, op: "==", threshold: 0, unit: rows}
+  - {id: D3b, area: Data quality, metric: "Zone-hour demand vs silver trip reconciliation diff", key: dq.demand_reconciliation_diff, op: "==", threshold: 0, unit: rows}
+  - {id: D4, area: Reproducibility, metric: "Fresh clone -> sample end-to-end", key: repro.sample_e2e_min, op: "<=", threshold: 30, unit: min}
+  - {id: D5a, area: Reproducibility, metric: "Test pass rate", key: tests.pass_pct, op: ">=", threshold: 100, unit: "%"}
+  - {id: D5b, area: Reproducibility, metric: "Line coverage of src/", key: tests.coverage_pct, op: ">=", threshold: 70, unit: "%"}

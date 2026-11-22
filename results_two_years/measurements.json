@@ -1,0 +1,241 @@
+{
+  "anomaly.alert_rate_pct": {
+    "context": {
+      "best_model": "gbt",
+      "injected_rows": 265
+    },
+    "recorded_at": "2026-11-08T09:30:31+00:00",
+    "value": 1.718242193019641
+  },
+  "anomaly.injected_f1": {
+    "context": {
+      "best_model": "gbt",
+      "injected_rows": 265
+    },
+    "recorded_at": "2026-11-08T09:30:31+00:00",
+    "value": 0.5787545787545788
+  },
+  "anomaly.injected_precision": {
+    "context": {
+      "best_model": "gbt",
+      "injected_rows": 265
+    },
+    "recorded_at": "2026-11-08T09:30:31+00:00",
+    "value": 0.427797833935018
+  },
+  "anomaly.injected_recall": {
+    "context": {
+      "best_model": "gbt",
+      "injected_rows": 265
+    },
+    "recorded_at": "2026-11-08T09:30:31+00:00",
+    "value": 0.8943396226415095
+  },
+  "anomaly.rule_precision": {
+    "context": {
+      "best_model": "gbt",
+      "injected_rows": 265
+    },
+    "recorded_at": "2026-11-08T09:30:31+00:00",
+    "value": 0.29238329238329236
+  },
+  "anomaly.rule_recall": {
+    "context": {
+      "best_model": "gbt",
+      "injected_rows": 265
+    },
+    "recorded_at": "2026-11-08T09:30:31+00:00",
+    "value": 0.36503067484662577
+  },
+  "dq.demand_reconciliation_diff": {
+    "context": {
+      "months": [
+        "2022-07",
+        "2022-08",
+        "2022-09",
+        "2022-10",
+        "2022-11",
+        "2022-12",
+        "2023-01",
+        "2023-02",
+        "2023-03",
+        "2023-04",
+        "2023-05",
+        "2023-06",
+        "2023-07",
+        "2023-08",
+        "2023-09",
+        "2023-10",
+        "2023-11",
+        "2023-12",
+        "2024-01",
+        "2024-02",
+        "2024-03",
+        "2024-04",
+        "2024-05",
+        "2024-06"
+      ]
+    },
+    "recorded_at": "2026-11-08T09:08:33+00:00",
+    "value": 0.0
+  },
+  "dq.max_reconciliation_diff": {
+    "context": {
+      "months": "2022-07..2024-06",
+      "source": "all 24 dq reports"
+    },
+    "recorded_at": "2026-11-18T08:23:10+00:00",
+    "value": 0.0
+  },
+  "dq.max_reject_rate_pct": {
+    "context": {
+      "months": "2022-07..2024-06",
+      "note": "recomputed from dq/*.json; silver ran in 4 chunks and the original value (4.771) held only the last chunk",
+      "worst_month": "2023-09"
+    },
+    "recorded_at": "2026-11-08T09:07:53+00:00",
+    "value": 6.229
+  },
+  "dq.silver_duplicates": {
+    "context": {
+      "months": [
+        "2024-01",
+        "2024-02",
+        "2024-03",
+        "2024-04",
+        "2024-05",
+        "2024-06"
+      ]
+    },
+    "recorded_at": "2026-11-08T09:07:53+00:00",
+    "value": 0.0
+  },
+  "features.build_min": {
+    "context": {
+      "months": [
+        "2022-07",
+        "2022-08",
+        "2022-09",
+        "2022-10",
+        "2022-11",
+        "2022-12",
+        "2023-01",
+        "2023-02",
+        "2023-03",
+        "2023-04",
+        "2023-05",
+        "2023-06",
+        "2023-07",
+        "2023-08",
+        "2023-09",
+        "2023-10",
+        "2023-11",
+        "2023-12",
+        "2024-01",
+        "2024-02",
+        "2024-03",
+        "2024-04",
+        "2024-05",
+        "2024-06"
+      ]
+    },
+    "recorded_at": "2026-11-08T09:09:05+00:00",
+    "value": 0.49448551608332614
+  },
+  "ml.best_mae": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 6.573117137215794
+  },
+  "ml.best_mape_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 19.50391951877817
+  },
+  "ml.best_r2": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 0.9648796909095058
+  },
+  "ml.best_rmse": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 14.297762227457726
+  },
+  "ml.best_wape_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 15.266282338927775
+  },
+  "ml.gbt_train_min": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 10.083542157349985
+  },
+  "ml.gbt_vs_lr_mae_improvement_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 7.61513883873082
+  },
+  "ml.inference_rows_per_s": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 15598.321452397387
+  },
+  "ml.mae_improvement_vs_persistence_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 40.05480616169398
+  },
+  "ml.mae_improvement_vs_seasonal_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 31.4759684232353
+  },
+  "ml.peak_wape_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 12.681263336259551
+  },
+  "ml.worst_borough_wape_pct": {
+    "context": {
+      "best_model": "gbt",
+      "best_params": {}
+    },
+    "recorded_at": "2026-11-08T09:29:59+00:00",
+    "value": 81.85187777646432
+  }
+}

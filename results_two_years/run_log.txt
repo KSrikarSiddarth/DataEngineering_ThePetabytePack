@@ -1,0 +1,134 @@
+NYC MobilityPulse - two-year run (2022-07..2024-06), 2026-11-08, times in UTC
+Machine: Windows host, Docker Desktop (20 vCPU, 15.3 GiB), image mobilitypulse-dev (Python 3.11, Java 17, Spark 3.5.3)
+Overrides: MP__FEATURES__MIN_ZONE_TRIPS=8000 MP__ML__TUNING__ENABLED=false MP__ML__GBT__MAX_DEPTH=6 MP__ML__GBT__STEP_SIZE=0.1
+Ingest of the 18 new months + NOAA 2022/2023: 373.5 s (separate command, before this log)
+Part 1 (spark.master=local[*], driver_memory=6g): bronze..analytics; ml failed with java.lang.OutOfMemoryError in random forest
+Part 2 (spark.master=local[8], driver_memory=10g): ml, anomaly, export
+
+===================================== PART 1 ======================================== --stage bronze --months 2022-07..2024-06 08:55:59
+08:55:59Z INFO    mobilitypulse - data dir: /data
+08:58:58Z INFO    mobilitypulse.batch.bronze - bronze/trips: 78480834 rows for ['2022-07', '2022-08', '2022-09', '2022-10', '2022-11', '2022-12', '2023-01', '2023-02', '2023-03', '2023-04', '2023-05', '2023-06', '2023-07', '2023-08', '2023-09', '2023-10', '2023-11', '2023-12', '2024-01', '2024-02', '2024-03', '2024-04', '2024-05', '2024-06']
+08:58:58Z INFO    mobilitypulse - stage bronze    done in  176.9s -> {"zones": 265, "weather_obs": 35050, "trips": 78480834}
+08:58:58Z INFO    mobilitypulse - finished: {'bronze': 176.9}
+=== --stage silver --months 2022-07..2022-12 08:58:59
+08:58:59Z INFO    mobilitypulse - data dir: /data
+09:01:12Z INFO    mobilitypulse.batch.silver - DQ 2022-07 input=3174394 valid=3039343 rejected=135051 diff=0 rate=4.25%
+09:01:12Z INFO    mobilitypulse.batch.silver - DQ 2022-08 input=3152677 valid=3011007 rejected=141670 diff=0 rate=4.49%
+09:01:12Z INFO    mobilitypulse.batch.silver - DQ 2022-09 input=3183767 valid=3041985 rejected=141782 diff=0 rate=4.45%
+09:01:12Z INFO    mobilitypulse.batch.silver - DQ 2022-10 input=3675411 valid=3507234 rejected=168177 diff=0 rate=4.58%
+09:01:12Z INFO    mobilitypulse.batch.silver - DQ 2022-11 input=3252717 valid=3092695 rejected=160022 diff=0 rate=4.92%
+09:01:12Z INFO    mobilitypulse.batch.silver - DQ 2022-12 input=3399549 valid=3230917 rejected=168632 diff=0 rate=4.96%
+09:01:12Z INFO    mobilitypulse - stage silver    done in  130.8s -> {"weather_hours": 4416, "dq": {"2022-07": {"month": "2022-07", "rejects_by_reason": {"DISTANCE_OUT_OF_RANGE": 15925, "NEGATIVE_DURATION": 1261, "INVALID_ZONE": 53429, "FARE_OUT_OF_RANGE": 15858, "DURATION_OUT_OF_RANGE": 48358, "OUTSIDE_SOURCE_MONTH": 82, "SPEED_IMPLAUSIBLE": 138}, "valid_rows": 3...
+09:01:12Z INFO    mobilitypulse - finished: {'silver': 130.8}
+=== --stage silver --months 2023-01..2023-06 09:01:13
+09:01:13Z INFO    mobilitypulse - data dir: /data
+09:03:28Z INFO    mobilitypulse.batch.silver - DQ 2023-01 input=3066766 valid=2934720 rejected=132046 diff=0 rate=4.31%
+09:03:28Z INFO    mobilitypulse.batch.silver - DQ 2023-02 input=2913955 valid=2791945 rejected=122010 diff=0 rate=4.19%
+09:03:28Z INFO    mobilitypulse.batch.silver - DQ 2023-03 input=3403766 valid=3268266 rejected=135500 diff=0 rate=3.98%
+09:03:28Z INFO    mobilitypulse.batch.silver - DQ 2023-04 input=3288250 valid=3160024 rejected=128226 diff=0 rate=3.90%
+09:03:28Z INFO    mobilitypulse.batch.silver - DQ 2023-05 input=3513649 valid=3373559 rejected=140090 diff=0 rate=3.99%
+09:03:28Z INFO    mobilitypulse.batch.silver - DQ 2023-06 input=3307234 valid=3169510 rejected=137724 diff=0 rate=4.16%
+09:03:28Z INFO    mobilitypulse - stage silver    done in  131.8s -> {"weather_hours": 4344, "dq": {"2023-01": {"month": "2023-01", "rejects_by_reason": {"SPEED_IMPLAUSIBLE": 98, "OUTSIDE_SOURCE_MONTH": 48, "FARE_OUT_OF_RANGE": 19685, "DISTANCE_OUT_OF_RANGE": 22100, "INVALID_ZONE": 53954, "DURATION_OUT_OF_RANGE": 36158, "NEGATIVE_DURATION": 3}, "valid_rows": 29347...
+09:03:28Z INFO    mobilitypulse - finished: {'silver': 131.8}
+=== --stage silver --months 2023-07..2023-12 09:03:29
+09:03:29Z INFO    mobilitypulse - data dir: /data
+09:05:34Z INFO    mobilitypulse.batch.silver - DQ 2023-07 input=2907108 valid=2772339 rejected=134769 diff=0 rate=4.64%
+09:05:34Z INFO    mobilitypulse.batch.silver - DQ 2023-08 input=2824209 valid=2685810 rejected=138399 diff=0 rate=4.90%
+09:05:34Z INFO    mobilitypulse.batch.silver - DQ 2023-09 input=2846722 valid=2669394 rejected=177328 diff=0 rate=6.23%
+09:05:34Z INFO    mobilitypulse.batch.silver - DQ 2023-10 input=3522285 valid=3306979 rejected=215306 diff=0 rate=6.11%
+09:05:34Z INFO    mobilitypulse.batch.silver - DQ 2023-11 input=3339715 valid=3148293 rejected=191422 diff=0 rate=5.73%
+09:05:34Z INFO    mobilitypulse.batch.silver - DQ 2023-12 input=3376567 valid=3220400 rejected=156167 diff=0 rate=4.62%
+09:05:34Z INFO    mobilitypulse - stage silver    done in  122.9s -> {"weather_hours": 4416, "dq": {"2023-07": {"month": "2023-07", "rejects_by_reason": {"NEGATIVE_DURATION": 162, "DURATION_OUT_OF_RANGE": 37672, "OUTSIDE_SOURCE_MONTH": 59, "DISTANCE_OUT_OF_RANGE": 23625, "FARE_OUT_OF_RANGE": 25003, "SPEED_IMPLAUSIBLE": 103, "INVALID_ZONE": 48145}, "valid_rows": 27...
+09:05:34Z INFO    mobilitypulse - finished: {'silver': 122.9}
+=== --stage silver --months 2024-01..2024-06 09:05:35
+09:05:35Z INFO    mobilitypulse - data dir: /data
+09:07:53Z INFO    mobilitypulse.batch.silver - DQ 2024-01 input=2964624 valid=2833807 rejected=130817 diff=0 rate=4.41%
+09:07:53Z INFO    mobilitypulse.batch.silver - DQ 2024-02 input=3007526 valid=2870804 rejected=136722 diff=0 rate=4.55%
+09:07:53Z INFO    mobilitypulse.batch.silver - DQ 2024-03 input=3582628 valid=3411690 rejected=170938 diff=0 rate=4.77%
+09:07:53Z INFO    mobilitypulse.batch.silver - DQ 2024-04 input=3514289 valid=3385270 rejected=129019 diff=0 rate=3.67%
+09:07:53Z INFO    mobilitypulse.batch.silver - DQ 2024-05 input=3723833 valid=3582408 rejected=141425 diff=0 rate=3.80%
+09:07:53Z INFO    mobilitypulse.batch.silver - DQ 2024-06 input=3539193 valid=3395272 rejected=143921 diff=0 rate=4.07%
+09:07:53Z INFO    mobilitypulse - stage silver    done in  135.1s -> {"weather_hours": 4368, "dq": {"2024-01": {"month": "2024-01", "rejects_by_reason": {"INVALID_ZONE": 28388, "FARE_OUT_OF_RANGE": 29640, "DURATION_OUT_OF_RANGE": 36837, "NEGATIVE_DURATION": 56, "SPEED_IMPLAUSIBLE": 59, "DISTANCE_OUT_OF_RANGE": 35819, "OUTSIDE_SOURCE_MONTH": 18}, "valid_rows": 2833...
+09:07:53Z INFO    mobilitypulse - finished: {'silver': 135.1}
+=== --stage demand --months 2022-07..2024-06 09:07:53
+09:07:54Z INFO    mobilitypulse - data dir: /data
+09:08:33Z INFO    mobilitypulse.batch.demand - zone_hour_demand: 4614072 rows, trip reconciliation diff=0
+09:08:33Z INFO    mobilitypulse - stage demand    done in   37.1s -> 4614072
+09:08:33Z INFO    mobilitypulse - finished: {'demand': 37.1}
+=== --stage features --months 2022-07..2024-06 09:08:33
+09:08:33Z INFO    mobilitypulse - data dir: /data
+09:09:05Z INFO    mobilitypulse.batch.features - features: eligible zones=105 rows by split={'train': 1771350, 'test': 35385, 'validation': 17640}
+09:09:05Z INFO    mobilitypulse - stage features  done in   29.7s -> {"train": 1771350, "test": 35385, "validation": 17640}
+09:09:05Z INFO    mobilitypulse - finished: {'features': 29.7}
+=== --stage analytics --months 2022-07..2024-06 09:09:06
+09:09:06Z INFO    mobilitypulse - data dir: /data
+09:09:28Z INFO    mobilitypulse.batch.analytics - gold/analytics/demand_profile: 44184 rows
+09:09:31Z INFO    mobilitypulse.batch.analytics - gold/analytics/top_zones_daily: 7310 rows
+09:09:41Z INFO    mobilitypulse.batch.analytics - gold/analytics/weather_impact: 108 rows
+09:09:49Z INFO    mobilitypulse.batch.analytics - gold/analytics/borough_summary: 144 rows
+09:09:57Z INFO    mobilitypulse.batch.analytics - gold/analytics/zone_volatility: 263 rows
+09:10:04Z INFO    mobilitypulse.batch.analytics - gold/analytics/od_flows: 142 rows
+09:10:04Z INFO    mobilitypulse - stage analytics done in   56.2s -> {"demand_profile": 44184, "top_zones_daily": 7310, "weather_impact": 108, "borough_summary": 144, "zone_volatility": 263, "od_flows": 142}
+09:10:04Z INFO    mobilitypulse - finished: {'analytics': 56.2}
+=== --stage ml 09:10:04
+09:10:04Z INFO    mobilitypulse - data dir: /data
+09:10:21Z INFO    mobilitypulse.ml.train - training rows=1771350 evaluation rows=53025
+09:10:43Z INFO    mobilitypulse.ml.train - linear_regression: params {}, fit 16.3s, inference 74298 rows/s
+26/11/08 09:13:59 ERROR Executor: Exception in task 2.0 in stage 76.0 (TID 726)
+java.lang.OutOfMemoryError: Java heap space
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally(SparkErrorUtils.scala:64)
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally$(SparkErrorUtils.scala:61)
+26/11/08 09:14:02 ERROR Executor: Exception in task 16.0 in stage 76.0 (TID 740)
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:02 ERROR Executor: Exception in task 12.0 in stage 76.0 (TID 736)
+java.lang.OutOfMemoryError: Java heap space
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally(SparkErrorUtils.scala:64)
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally$(SparkErrorUtils.scala:61)
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:08 ERROR Executor: Exception in task 8.0 in stage 76.0 (TID 732)
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:14 ERROR Executor: Exception in task 5.0 in stage 76.0 (TID 729)
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:14 ERROR SparkUncaughtExceptionHandler: Uncaught exception in thread Thread[Executor task launch worker for task 16.0 in stage 76.0 (TID 740),5,main]
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:14 ERROR SparkUncaughtExceptionHandler: Uncaught exception in thread Thread[Executor task launch worker for task 8.0 in stage 76.0 (TID 732),5,main]
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:14 ERROR SparkUncaughtExceptionHandler: Uncaught exception in thread Thread[Executor task launch worker for task 5.0 in stage 76.0 (TID 729),5,main]
+java.lang.OutOfMemoryError: Java heap space
+26/11/08 09:14:14 ERROR SparkUncaughtExceptionHandler: Uncaught exception in thread Thread[Executor task launch worker for task 2.0 in stage 76.0 (TID 726),5,main]
+java.lang.OutOfMemoryError: Java heap space
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally(SparkErrorUtils.scala:64)
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally$(SparkErrorUtils.scala:61)
+26/11/08 09:14:14 ERROR SparkUncaughtExceptionHandler: Uncaught exception in thread Thread[Executor task launch worker for task 12.0 in stage 76.0 (TID 736),5,main]
+java.lang.OutOfMemoryError: Java heap space
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally(SparkErrorUtils.scala:64)
+	at org.apache.spark.util.SparkErrorUtils.tryWithSafeFinally$(SparkErrorUtils.scala:61)
+26/11/08 09:14:14 ERROR Instrumentation: org.apache.spark.SparkException: Job aborted due to stage failure: Task 16 in stage 76.0 failed 1 times, most recent failure: Lost task 16.0 in stage 76.0 (TID 740) (63e546388d85 executor driver): java.lang.OutOfMemoryError: Java heap space
+Caused by: java.lang.OutOfMemoryError: Java heap space
+Traceback (most recent call last):
+    raise Py4JJavaError(
+py4j.protocol.Py4JJavaError: An error occurred while calling o772.fit.
+: org.apache.spark.SparkException: Job aborted due to stage failure: Task 16 in stage 76.0 failed 1 times, most recent failure: Lost task 16.0 in stage 76.0 (TID 740) (63e546388d85 executor driver): java.lang.OutOfMemoryError: Java heap space
+Caused by: java.lang.OutOfMemoryError: Java heap space
+
+===================================== PART 2 =====================================
+=== --stage ml 09:14:40
+09:14:40Z INFO    mobilitypulse - data dir: /data
+09:14:57Z INFO    mobilitypulse.ml.train - training rows=1771350 evaluation rows=53025
+09:15:21Z INFO    mobilitypulse.ml.train - linear_regression: params {}, fit 17.5s, inference 72240 rows/s
+09:19:40Z INFO    mobilitypulse.ml.train - random_forest: params {}, fit 251.1s, inference 20043 rows/s
+09:29:54Z INFO    mobilitypulse.ml.train - gbt: params {}, fit 605.0s, inference 15598 rows/s
+09:29:59Z INFO    mobilitypulse.ml.train - best model=gbt test metrics={'ml.best_mae': 6.573, 'ml.best_rmse': 14.298, 'ml.best_wape_pct': 15.266, 'ml.best_mape_pct': 19.504, 'ml.best_r2': 0.965, 'ml.mae_improvement_vs_seasonal_pct': 31.476, 'ml.mae_improvement_vs_persistence_pct': 40.055, 'ml.worst_borough_wape_pct': 81.852, 'ml.peak_wape_pct': 12.681, 'ml.inference_rows_per_s': 15598.321, 'ml.gbt_train_min': 10.084, 'ml.gbt_vs_lr_mae_improvement_pct': 7.615}
+09:29:59Z INFO    mobilitypulse - stage ml        done in  916.4s -> {"best_model": "gbt", "ml.best_mae": 6.573117137215794, "ml.best_rmse": 14.297762227457726, "ml.best_wape_pct": 15.266282338927775, "ml.best_mape_pct": 19.50391951877817, "ml.best_r2": 0.9648796909095058, "ml.mae_improvement_vs_seasonal_pct": 31.4759684232353, "ml.mae_improvement_vs_persistence_p...
+09:29:59Z INFO    mobilitypulse - finished: {'ml': 916.4}
+=== --stage anomaly 09:29:59
+09:29:59Z INFO    mobilitypulse - data dir: /data
+09:30:31Z INFO    mobilitypulse.ml.anomaly - anomalies=828 injected P/R/F1=0.43/0.89/0.58 rule P/R=0.29/0.37 alert rate=1.72%
+09:30:31Z INFO    mobilitypulse - stage anomaly   done in   29.4s -> {"anomalies": 828, "injected:residual_flag": {"tp": 237, "fp": 317, "fn": 28, "n": 12646, "alerts": 554, "precision": 0.427797833935018, "recall": 0.8943396226415095, "f1": 0.5787545787545788, "alert_rate_pct": 4.380831883599557}, "injected:mad_flag": {"tp": 198, "fp": 230, "fn": 67, "n": 12646, ...
+09:30:31Z INFO    mobilitypulse - finished: {'anomaly': 29.4}
+=== --stage export 09:30:32
+09:30:32Z INFO    mobilitypulse - data dir: /data
+09:30:41Z INFO    mobilitypulse.serving.export - serving DB /data/serving/mobilitypulse.db: {'zones': 265, 'demand_profile': 44184, 'top_zones_daily': 7310, 'weather_impact': 108, 'borough_summary': 144, 'zone_volatility': 263, 'od_flows': 142, 'zone_hour_demand_recent': 189623, 'forecasts': 35385, 'model_metrics': 90, 'anomaly_metrics': 5, 'anomalies': 828}
+09:30:41Z INFO    mobilitypulse - stage export    done in    9.4s -> {"zones": 265, "demand_profile": 44184, "top_zones_daily": 7310, "weather_impact": 108, "borough_summary": 144, "zone_volatility": 263, "od_flows": 142, "zone_hour_demand_recent": 189623, "forecasts": 35385, "model_metrics": 90, "anomaly_metrics": 5, "anomalies": 828}
+09:30:41Z INFO    mobilitypulse - finished: {'export': 9.4}
+=== ALL DONE 09:30:41
