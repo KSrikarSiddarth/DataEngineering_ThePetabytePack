@@ -1,28 +1,31 @@
 # Running MobilityPulse on SetupF in distributed mode
 
-Project: `MobilityPulse_Submission-V2-Chandana-Windows.zip`, modified for the cluster. The modified project is
-**`MobilityPulse_Submission-V2-Chandana-Windows-SetupF.zip`** (source: `MobilityPulse_SetupF/MobilityPulse_Submission/`).
-Infrastructure: `SetupF.md` (Windows VM1 `spark-master`, Ubuntu VM2 `spark-worker` with MinIO, one Azure VNet).
+Project: the MobilityPulse code in this folder (`DataEngineering_ThePetabytePack`), modified to run on a Spark cluster.
+Infrastructure: `SetupF.md` (Windows VM1 `spark-master`, Ubuntu VM2 `spark-worker` with MinIO, Ubuntu VM3 `spark-worker-2`, one Azure VNet).
 
 ## 0. How it runs
 
 | Machine | Role for MobilityPulse |
 |---|---|
 | **VM1** (Windows) | Spark **master** and the **driver**: you run `.\mp.cmd <task> -Cluster` here. Downloads the raw data, keeps the pipeline state table and the serving DB (SQLite), runs the dashboard and API |
-| **VM2** (Ubuntu) | Spark **worker** (the executors do the work), **MinIO** (the data lake), optional **Kafka** and the Kafka producer |
+| **VM2** (Ubuntu) | Spark **worker** (executors), **MinIO** (the data lake), optional **Kafka** and the Kafka producer |
+| **VM3** (Ubuntu) | Second Spark **worker** (executors only; no MinIO, no Kafka). Same size as VM2 |
 
 ```
  VM1 (Windows)                                   VM2 (Ubuntu)
-  .\mp.cmd pipeline -Cluster                      Spark worker -> executors (Python 3.12 + numpy/pandas/pyarrow)
+  .\mp.cmd pipeline -Cluster                      Spark worker -> executor (Python 3.12 + numpy/pandas/pyarrow)
   driver  :40000-40002  <---------------------->  MinIO :9000   s3a://lake/mobilitypulse/{raw,bronze,silver,gold,
-  master  :7077                                                   quarantine,models,checkpoints}
-  local: raw downloads, state, serving DB          Kafka :9092 (optional, stream path)
+  master  :7077   ^                                               quarantine,models,checkpoints}
+  local: raw downloads, state, serving DB  |       Kafka :9092 (optional, stream path)
+                  |                        |            ^ s3a:// over the VNet, shuffle between executors
+                  |                        |       VM3 (Ubuntu)
+                  +------------------------+-----> Spark worker -> executor (same Python and packages as VM2)
 ```
 
 - **Data flow:** `ingest` downloads on VM1, then uploads the raw files to MinIO. Every later Spark stage (bronze,
-  silver, demand, features, analytics, ml, anomaly, stream) runs on the executors on VM2, which read and write
-  `s3a://lake/mobilitypulse/...` over loopback. `export` reads Gold from MinIO (pyarrow) into the SQLite file on VM1.
-- **Credentials:** the driver sends the MinIO keys to the executors with the Spark config. VM2's Spark needs no MinIO settings.
+  silver, demand, features, analytics, ml, anomaly, stream) runs on the executors, one on VM2 and one on VM3. Both read and write
+  `s3a://lake/mobilitypulse/...` (VM2's over loopback, VM3's over the VNet), and exchange shuffle data with each other. `export` reads Gold from MinIO (pyarrow) into the SQLite file on VM1.
+- **Credentials:** the driver sends the MinIO keys to the executors with the Spark config. The Spark installs on VM2 and VM3 need no MinIO settings.
 - **Same code, two modes:** without `-Cluster` the project still runs as `local[*]` on one machine, as before.
 
 ### What was verified, and what was not
@@ -37,7 +40,7 @@ installed, like VM2):
 - the stream path: native Kafka, the producer reading bronze from MinIO, the stream job with its checkpoint on `s3a://`,
   then `export` showing the "Live stream" table.
 
-**Not verified** (no access to the VMs): the Azure VMs themselves, a **Windows driver** talking to a **Linux executor**
+**Not verified** (no access to the VMs): the Azure VMs themselves, **the second worker** (my test cluster had one worker with one executor, so shuffle between two executors on different machines, and VM3 reading MinIO over the network, were not exercised), a **Windows driver** talking to a **Linux executor**
 (SetupF section 4.2 describes this pattern for the other project, and it needs the matching Python 3.12), real-data
 run times (`pipeline -Months medium`), and the dashboard on VM1. The steps for those are written from SetupF and the
 project's Windows docs. Where something is an estimate it says so.
@@ -46,16 +49,16 @@ project's Windows docs. Where something is an estimate it says so.
 
 ## 1. Before you start: what SetupF must already have
 
-SetupF sections 1 to 7 done: both VMs, SSH, Spark 3.5.3 master on VM1 and worker on VM2, **MinIO on VM2 with the bucket
-`lake`** (section 7.4 creates `bronze` and `lake`), cluster check in section 6 shows the worker **ALIVE**.
+SetupF sections 1 to 7 done, including **VM3 (section 5.4)**: the three VMs, SSH, Spark 3.5.3 master on VM1 and workers on VM2 and VM3, **MinIO on VM2 with the bucket
+`lake`** (section 7.4 creates `bronze` and `lake`), cluster check in section 6 shows **both workers ALIVE** (6 cores, 8 GiB).
 
 Two things to know about SetupF:
 
 1. **MinIO download (section 7.1):** `https://dl.min.io/server/minio/release/linux-amd64/minio` now answers
    **410 Gone** (checked). Use the build-from-source fallback in 7.1. I ran exactly that
    (`go install github.com/minio/minio@latest` with Go 1.24.4) and it built in about 9 minutes, so it works.
-2. **Memory:** VM1 and VM2 have 8 GB each. The project's own default driver memory (6g) does not fit VM1, so the profile
-   uses the SetupF values: driver 2g, executor 3g, 3 cores.
+2. **Memory:** VM1, VM2 and VM3 have 8 GB each. The project's own default driver memory (6g) does not fit VM1, so the profile
+   uses the SetupF values: driver 2g, executor 3g, 3 cores per executor, 6 cores in total (one executor per worker).
 
 ---
 
@@ -63,33 +66,42 @@ Two things to know about SetupF:
 
 ### 2.1 Copy the project (your machine)
 
+This is the same copy step as SetupF 8.1. If you already copied the folder to the VMs there, repeat it so that the
+newest code is on VM1, and VM2 and VM3 have `requirements-executor.txt`:
+
 ```bash
 cd ~/siddu/MTech/DataEngineeringAtScale
-scp MobilityPulse_Submission-V2-Chandana-Windows-SetupF.zip spark-master:C:/mp.zip
-scp MobilityPulse_Submission-V2-Chandana-Windows-SetupF.zip spark-worker:~/mp.zip      # only needed for the stream producer (4.2) or a Linux driver
+tar czf /tmp/petabyte.tgz --exclude=data --exclude=output --exclude=.git --exclude=__pycache__ \
+    --exclude='.env.*' --exclude=.venv DataEngineering_ThePetabytePack
+scp /tmp/petabyte.tgz spark-master:C:/petabyte.tgz
+scp /tmp/petabyte.tgz spark-worker:~/          # VM2: executor packages, and the stream producer (section 5.2)
+scp /tmp/petabyte.tgz spark-worker-2:~/        # VM3: only for the executor packages file
 ```
 
 **[VM1 PowerShell]**:
 
 ```powershell
-Expand-Archive C:\mp.zip C:\mp -Force
-cd C:\mp\MobilityPulse_Submission
+tar -xzf C:\petabyte.tgz -C C:\
+cd C:\DataEngineering_ThePetabytePack
 ```
 
-### 2.2 VM2: packages for the executors
+`.env.*` is excluded on purpose: it holds the MinIO password, so a `.env.setupF` already on a VM is not overwritten.
+The same `.env.setupF` file works for both projects.
 
-The executors run Python workers, so VM2's Python needs the same packages and the **same Python version as the driver
+### 2.2 VM2 and VM3: packages for the executors
+
+The executors run Python workers, so the Python on **each** worker VM needs the same packages and the **same Python version as the driver
 (3.12, which is Ubuntu 24.04's `python3`)**. The `mobilitypulse` package itself is sent by the driver, so it is not installed here.
 
-**[VM2 bash]**:
+**[VM2 bash]** and then the same on **[VM3 bash]**:
 
 ```bash
-unzip -q ~/mp.zip -d ~/mp && cd ~/mp/MobilityPulse_Submission
+tar -xzf ~/petabyte.tgz -C ~ && cd ~/DataEngineering_ThePetabytePack
 pip install --break-system-packages -r requirements-executor.txt     # as SetupF 8.3: the worker runs as your user
 python3 -c "import numpy, pandas, pyarrow, pyspark; print('executor packages ok')"
 ```
 
-`python3` must be the interpreter the worker finds. If you prefer a venv, use its `bin/python` path as
+`python3` must be the interpreter the worker finds, and it must be the same Python 3.12 on VM2 and VM3. If you prefer a venv, use its `bin/python` path as
 `EXECUTOR_PYTHON` in `.env.setupF` (step 2.4).
 
 ### 2.3 VM1: Python 3.12 environment for the driver
@@ -97,7 +109,7 @@ python3 -c "import numpy, pandas, pyarrow, pyspark; print('executor packages ok'
 SetupF section 3 already installed Java 17, Spark, Python 3.12 (`C:\Python312`), `C:\hadoop\bin\winutils.exe` and the
 machine-wide variables. The project's setup script creates a separate venv and installs the project and its packages.
 
-**[VM1 PowerShell]**, in `C:\mp\MobilityPulse_Submission`:
+**[VM1 PowerShell]**, in `C:\DataEngineering_ThePetabytePack`:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
@@ -123,13 +135,14 @@ MASTER_IP=<MASTER_IP>
 DRIVER_MEMORY=2g
 EXECUTOR_MEMORY=3g
 EXECUTOR_CORES=3
-TOTAL_CORES=3
+TOTAL_CORES=6
 EXECUTOR_PYTHON=python3
 KAFKA_BOOTSTRAP=
 "@
 Get-Content .env.setupF
 ```
 
+- **`TOTAL_CORES=6`:** two workers with 3 cores each, and `EXECUTOR_CORES=3`, give **two executors, one per worker**. With `TOTAL_CORES=3` only one executor would start and one worker would idle. Use 3 if you deallocate VM3.
 - **Private IPs, never `localhost`:** the executors receive the same addresses.
 - **Values unquoted.** The file holds the MinIO password and is ignored by git (`.gitignore`).
 - `MASTER_IP` gives `spark://<MASTER_IP>:7077` and, because the driver runs on VM1, the address the executors call back on.
@@ -149,15 +162,15 @@ Expected, in about 1 to 2 minutes (the first run downloads the S3A jars, about 3
 master   : spark://<MASTER_IP>:7077
 data dir : s3a://lake/mobilitypulse
   OK    read/write on s3a://lake/mobilitypulse
-  OK    tasks ran on: spark-worker               <- the executors run on VM2, not on VM1
-  OK    1 executor(s) registered
+  OK    tasks ran on: spark-worker, spark-worker-2   <- the executors run on VM2 and VM3, not on VM1
+  OK    2 executor(s) registered
   OK    shuffle (groupBy) works
   OK    Python UDF using the mobilitypulse package works on the executors
   OK    parquet write + read on s3a://lake/mobilitypulse/_check
 cluster check: PASSED
 ```
 
-If a line fails, see section 6 before running anything else. `check` only writes under `s3a://lake/mobilitypulse/_check` and deletes it.
+`tasks ran on` should list both worker hostnames and the executor count should be 2. If it shows one of each, check `TOTAL_CORES` and that both workers are ALIVE (section 6). If a line fails, see section 6 before running anything else. `check` only writes under `s3a://lake/mobilitypulse/_check` and deletes it.
 
 ---
 
@@ -166,7 +179,7 @@ If a line fails, see section 6 before running anything else. `check` only writes
 **[VM1 PowerShell]**:
 
 ```powershell
-cd C:\mp\MobilityPulse_Submission
+cd C:\DataEngineering_ThePetabytePack
 
 # 3.1 Synthetic data, no internet needed: every stage, on the cluster
 .\mp.cmd demo -Cluster                    # data in s3a://lake/mobilitypulse_sample
@@ -183,15 +196,15 @@ Single stages work too: `.\mp.cmd silver -Months medium -Cluster`, `.\mp.cmd ml 
 - **Where it ends up** (check on VM2 with `mc ls --recursive local/lake/mobilitypulse | head`):
   `raw/ bronze/ silver/ quarantine/ gold/ models/` under `lake/mobilitypulse`.
 - **Watch it:** open the tunnels from SetupF section 6 (`ssh -N -L 8080:<MASTER_IP>:8080 -L 4040:<MASTER_IP>:4040 spark-master`), then
-  `http://localhost:8080` (the application) and `http://localhost:4040` (jobs, stages, Executors tab: the executors are on `<VM2_IP>`).
-  On VM2: `htop`, `free -h`, `df -h /`.
+  `http://localhost:8080` (the application) and `http://localhost:4040` (jobs, stages, Executors tab: one executor on `<VM2_IP>` and one on `<VM3_IP>`).
+  On VM2 and VM3: `htop`, `free -h`, `df -h /`.
 - **Time:** the synthetic `demo` took about 11 minutes on my small test machine, mostly the ML stage (GBT, random forest).
-  With 3 cores on SetupF expect the same order of magnitude. For `pipeline -Months medium` I have **no measurement**; the
-  project's docs give 10 to 20 minutes on a 16 GB laptop, and the cluster has less memory and 3 cores, so plan for longer.
+  With 6 cores on SetupF (two workers) expect the same order of magnitude or somewhat faster. Every read and write goes through MinIO on VM2, so the second worker doubles compute but not storage throughput. For `pipeline -Months medium` I have **no measurement**; the
+  project's docs give 10 to 20 minutes on a 16 GB laptop, and the cluster has less memory per node, so plan for longer.
 - **Long runs survive an SSH disconnect** with the scheduled-task pattern of SetupF 10.3:
 
   ```powershell
-  $run = 'cd C:\mp\MobilityPulse_Submission; .\mp.cmd pipeline -Months medium -Cluster *> C:\spark-logs\mp-pipeline.log'
+  $run = 'cd C:\DataEngineering_ThePetabytePack; .\mp.cmd pipeline -Months medium -Cluster *> C:\spark-logs\mp-pipeline.log'
   $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-ExecutionPolicy Bypass -Command `"$run`""
   Register-ScheduledTask -TaskName MobilityPulse -Action $action -User SYSTEM -RunLevel Highest -Force
   Start-ScheduledTask -TaskName MobilityPulse
@@ -205,13 +218,13 @@ Single stages work too: `.\mp.cmd silver -Months medium -Cluster`, `.\mp.cmd ml 
 
 | Setting | Where | Default |
 |---|---|---|
-| Driver and executor memory, cores | `.env.setupF` (`DRIVER_MEMORY`, `EXECUTOR_MEMORY`, `EXECUTOR_CORES`, `TOTAL_CORES`) | 2g, 3g, 3, 3 |
+| Driver and executor memory, cores | `.env.setupF` (`DRIVER_MEMORY`, `EXECUTOR_MEMORY`, `EXECUTOR_CORES`, `TOTAL_CORES`) | 2g, 3g, 3, 6 |
 | Shuffle partitions | `$env:MP__SPARK__SHUFFLE_PARTITIONS = "16"` or `configs/profile_setupf.yaml` | 16 |
 | Fewer or lighter models | `$env:MP__ML__MODELS = "[linear_regression, gbt]"`, `$env:MP__ML__GBT__MAX_ITER = "60"` | 3 models, 150 iterations |
 | Any config value | `MP__SECTION__KEY` environment variable | see `configs/config.yaml` |
 
 If the ML stage runs out of memory on the executor (`java.lang.OutOfMemoryError`, executor lost), lower the number of
-models or trees first. Executor memory can't exceed the worker's 4g (`SPARK_WORKER_MEMORY`).
+models or trees first. Executor memory can't exceed the worker's 4g (`SPARK_WORKER_MEMORY`), and both executors use the same setting.
 
 ---
 
@@ -244,11 +257,11 @@ Open http://localhost:8501 (dashboard) and http://localhost:8000/docs (API).
 
 ## 5. The stream path (optional): Kafka on VM2
 
-Memory on VM2 is tight with MinIO, the worker (4g) and Kafka (1g). Set `EXECUTOR_MEMORY=2g` in `.env.setupF` while streaming.
+Memory on VM2 is tight with MinIO, the worker (4g) and Kafka (1g). Set `EXECUTOR_MEMORY=2g` in `.env.setupF` while streaming (the setting applies to both executors; VM3 alone would have room for more). VM3's executor reaches Kafka at `<VM2_IP>:9092` over the VNet.
 
 ### 5.1 Kafka on VM2
 
-**[VM2 bash]**, in `~/mp/MobilityPulse_Submission`. This is SetupF 12.1 as a script (no Docker):
+**[VM2 bash]**, in `~/DataEngineering_ThePetabytePack`. This is SetupF 12.1 as a script (no Docker):
 
 ```bash
 infra/setupF/kafka_native.sh install <VM2_IP>      # downloads Kafka 3.9.0 to ~/kafka, advertises <VM2_IP>:9092, formats KRaft storage
@@ -256,7 +269,7 @@ infra/setupF/kafka_native.sh start
 infra/setupF/kafka_native.sh topics                # taxi-trips (4 partitions) and taxi-trips-dlq
 ```
 
-Kafka doesn't restart by itself after a reboot: run `start` again. Add `KAFKA_BOOTSTRAP=<VM2_IP>:9092` to `.env.setupF` on **both** VMs.
+Kafka doesn't restart by itself after a reboot: run `start` again. Add `KAFKA_BOOTSTRAP=<VM2_IP>:9092` to `.env.setupF` on **both** VM1 and VM2 (VM3 gets it from the driver).
 
 ### 5.2 Producer (VM2)
 
@@ -295,9 +308,11 @@ make produce CLUSTER=1 RATE=2000 MAX=50000         # needs bronze for 2024-01 (t
 | `object store: ... NETWORK_CONNECTION / Couldn't connect` | MinIO not reachable on `<VM2_IP>:9000` from VM1: `Test-NetConnection <VM2_IP> -Port 9000`, `systemctl status minio` on VM2 |
 | `NO_SUCH_BUCKET` | Create it on VM2: `mc mb local/lake` (`check` creates it for you when missing) |
 | `InvalidAccessKeyId` / `SignatureDoesNotMatch` | Wrong `S3_ACCESS_KEY` / `S3_SECRET_KEY`, or a password with special characters: see SetupF 7.6 |
-| `no executor registered`, job hangs at "Initial job has not accepted any resources" | Worker not ALIVE in the master UI, or the executors can't reach the driver: check `Test-NetConnection` from VM2 (`nc -zv <MASTER_IP> 40000`) and the firewall rule for 40000-40002; check `MASTER_IP` is VM1's **private** IP |
-| `Python in worker has different version 3.x than that in driver 3.12` | VM2's `python3` is not 3.12, or `EXECUTOR_PYTHON` points elsewhere. Both machines need the same minor version |
-| `ModuleNotFoundError: numpy / pandas / pyarrow` in an executor | Step 2.2 not done on VM2 (or done for a different Python than `EXECUTOR_PYTHON`) |
+| `no executor registered`, job hangs at "Initial job has not accepted any resources" | Worker not ALIVE in the master UI, or the executors can't reach the driver: check `nc -zv <MASTER_IP> 40000` from VM2 **and** VM3 and the firewall rule for 40000-40002; check `MASTER_IP` is VM1's **private** IP |
+| `Python in worker has different version 3.x than that in driver 3.12` | `python3` on VM2 or VM3 is not 3.12, or `EXECUTOR_PYTHON` points elsewhere. All three machines need the same minor version |
+| `ModuleNotFoundError: numpy / pandas / pyarrow` in an executor | Step 2.2 not done on VM2 or on VM3 (or done for a different Python than `EXECUTOR_PYTHON`). Check which host the failing task ran on in the Spark UI |
+| Only one executor, or the other worker idles | `TOTAL_CORES` is 3 instead of 6, or `EXECUTOR_CORES` isn't 3. Check the Executors tab at `:4040` |
+| Stage fails with `FetchFailedException` or connection errors between executors, or VM3 can't reach MinIO | VM2 and VM3 must reach each other on all ports and VM3 must reach `<VM2_IP>:9000`: `nc -zv <VM2_IP> 9000` from VM3, `sudo ufw status` on both (inactive by default) |
 | `Failed to bind ... port 40000` | A previous driver is still running (Task Manager, `python.exe`), or another job holds 40000-40002. Only one Spark application at a time |
 | `java.lang.NoSuchMethodError` / `ClassNotFoundException` for `S3AFileSystem` | The `hadoop-aws` jar doesn't match Spark's Hadoop 3.3.4. The config uses `hadoop-aws:3.3.4`; don't mix other versions into `C:\spark\jars` |
 | Slow first start | Maven download of the S3A jars (about 300 MB); later runs reuse `%USERPROFILE%\.ivy2` |
@@ -317,7 +332,7 @@ make produce CLUSTER=1 RATE=2000 MAX=50000         # needs bronze for 2024-01 (t
 | `ml/train.py`, `ml/anomaly.py`, `serving/export.py`, `streaming/producer.py`, `streaming/stream_job.py`, `common/utils.py` | The few non-Spark file operations (small parquet files, `best_model.json`, delete, reads with pyarrow) go through the storage layer |
 | `cluster_check.py` (new), `mp.ps1`, `mp.cmd`, `setup_windows.ps1`, `Makefile` | `-Cluster` / `CLUSTER=1`, `check` / `cluster-check`, Python 3.12 venv for the cluster |
 | `infra/setupF/kafka_native.sh` (new) | Native single-broker Kafka on VM2 instead of Docker |
-| `setupF.env.example`, `requirements-executor.txt` (new), `.gitignore` | Settings template (`.env.setupF` is git-ignored), executor packages |
+| `setupF.env.example`, `requirements-executor.txt` (new), `.gitignore` | Settings template (`.env.setupF` is git-ignored; `TOTAL_CORES=6` for two workers), executor packages |
 | `tests/unit/test_cluster_mode.py` (new) | 10 tests for the storage layer, profile, settings mapping and Spark settings (no cluster needed) |
 
 ## 8. Not covered
@@ -327,5 +342,6 @@ make produce CLUSTER=1 RATE=2000 MAX=50000         # needs bronze for 2024-01 (t
   Run them on any one machine, not on the cluster.
 - **Task-level numbers in the report** (`results/`) come from the original local runs; a cluster run writes new
   `results\measurements.json` entries on VM1.
-- **HTTPS to MinIO / multiple workers:** the profile assumes `http://` and one worker. More workers only need the
-  same `requirements-executor.txt` on each and a higher `TOTAL_CORES`.
+- **HTTPS to MinIO:** the profile assumes `http://`.
+- **More workers:** a fourth VM only needs the SetupF 5.4 steps, the same `requirements-executor.txt`, and `TOTAL_CORES` raised by 3.
+- **Scaling and fault-tolerance demos** with the second worker are described in `SetupF.md` section 14.
