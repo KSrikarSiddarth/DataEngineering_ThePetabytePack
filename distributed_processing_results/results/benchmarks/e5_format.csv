@@ -1,0 +1,7 @@
+experiment,variant,rep,seconds,jobs,stages,tasks,shuffle_read_bytes,shuffle_write_bytes,spill_bytes,input_bytes
+e5_format,parquet,1,0.284,3,3,12,24239,24239,0,7078067
+e5_format,parquet,2,0.335,3,3,12,24239,24239,0,7078067
+e5_format,parquet,3,0.124,3,3,12,24239,24239,0,7078067
+e5_format,csv,1,2.606,3,3,12,82503,82503,0,326446979
+e5_format,csv,2,0.814,3,3,12,82503,82503,0,326446979
+e5_format,csv,3,0.72,3,3,12,82503,82503,0,326446979

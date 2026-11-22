@@ -10,19 +10,24 @@ project:
 
 paths:
   data_dir: ~/mobilitypulse_data # kept outside OneDrive; relative paths resolve from project root
-  raw: "{data_dir}/raw"
+  # data_dir is the data lake root. It can also be an object-store URI (s3a://lake/mobilitypulse): Spark then reads and
+  # writes bronze/silver/gold/models/checkpoints there. local_dir (default: data_dir) holds what stays on the driver
+  # machine (downloads, pipeline state, serving DB). See profile_setupf.yaml.
+  # local_dir: ~/mobilitypulse_data
+  raw: "{local_dir}/raw"          # where `ingest` downloads to (driver machine)
+  raw_lake: "{data_dir}/raw"      # where Spark reads the raw files from (same folder as raw unless data_dir is remote)
   bronze: "{data_dir}/bronze"
   silver: "{data_dir}/silver"
   gold: "{data_dir}/gold"
   quarantine: "{data_dir}/quarantine"
   models: "{data_dir}/models"
-  state: "{data_dir}/state"       # pipeline_state.parquet: per-month stage status for incremental runs
+  state: "{local_dir}/state"       # pipeline_state.parquet: per-month stage status for incremental runs
   checkpoints: "{data_dir}/checkpoints"
-  serving_db: "{data_dir}/serving/mobilitypulse.db"
+  serving_db: "{local_dir}/serving/mobilitypulse.db"
   stream_out: "{data_dir}/gold/stream_zone_metrics"
   stream_dlq: "{data_dir}/quarantine/stream_dlq"
-  bench: "{data_dir}/bench"
-  spark_events: "{data_dir}/spark-events"
+  bench: "{local_dir}/bench"
+  spark_events: "{local_dir}/spark-events"
   results: results
   logs: logs
 
@@ -43,10 +48,29 @@ datasets:
   # Default months processed by `run_pipeline.py --stage all` when --months is not given.
   default: ["2024-01", "2024-02", "2024-03"]
 
+# Object store (MinIO) settings, used when paths.data_dir is an s3a:// URI. The S3_ENDPOINT / S3_ACCESS_KEY /
+# S3_SECRET_KEY environment variables fill these in (keep keys out of this file).
+storage:
+  s3_endpoint: null             # e.g. http://10.0.0.5:9000
+  s3_access_key: null
+  s3_secret_key: null
+
 spark:
   app_name: NYC-MobilityPulse
-  master: local[*]
+  master: local[*]              # spark://<MASTER_IP>:7077 runs on the standalone cluster (profile_setupf.yaml)
   driver_memory: 6g
+  # --- cluster mode only (master: spark://...) ---
+  driver_host: null             # address executors use to reach the driver; null = 127.0.0.1 (local mode)
+  driver_bind_address: null     # null = 127.0.0.1 locally, 0.0.0.0 on a cluster
+  driver_port: 40000            # fixed ports so a firewall rule can allow them (blockManager 40001, driver bm 40002)
+  executor_memory: 3g
+  executor_cores: 3
+  cores_max: 3
+  executor_python: python3      # python executable on the executor machines (the driver may be Windows)
+  ship_package: true            # send the mobilitypulse package to the executors (they run Python UDFs)
+  s3a_packages:                 # Maven jars for s3a:// (omit/empty when already in $SPARK_HOME/jars)
+    - org.apache.hadoop:hadoop-aws:3.3.4
+    - com.amazonaws:aws-java-sdk-bundle:1.12.262
   shuffle_partitions: 32
   adaptive_enabled: true
   broadcast_threshold_mb: 10

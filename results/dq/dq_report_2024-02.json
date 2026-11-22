@@ -1,13 +1,13 @@
 {
   "month": "2024-02",
   "rejects_by_reason": {
-    "DISTANCE_OUT_OF_RANGE": 1131,
-    "DURATION_OUT_OF_RANGE": 1124,
-    "FARE_OUT_OF_RANGE": 1126,
-    "INVALID_ZONE": 1126,
     "OUTSIDE_SOURCE_MONTH": 1126,
+    "FARE_OUT_OF_RANGE": 1126,
+    "DURATION_OUT_OF_RANGE": 1124,
     "DUPLICATE": 439,
-    "NEGATIVE_DURATION": 1127
+    "NEGATIVE_DURATION": 1127,
+    "INVALID_ZONE": 1126,
+    "DISTANCE_OUT_OF_RANGE": 1131
   },
   "valid_rows": 218224,
   "input_rows": 225423,

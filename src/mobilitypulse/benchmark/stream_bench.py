@@ -87,7 +87,9 @@ class Trial:
 
     def start_job(self, reset: bool) -> None:
         cmd = [sys.executable, "-m", "mobilitypulse.streaming.stream_job", "--tag", self.tag]
-        self.proc = subprocess.Popen(cmd + (["--reset"] if reset else []), env=self.env)
+        # Windows: own process group so stop_job can deliver CTRL_BREAK (graceful) without hitting this process
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+        self.proc = subprocess.Popen(cmd + (["--reset"] if reset else []), env=self.env, creationflags=flags)
 
     def wait_ready(self, timeout: float = 300, after_ms: float = 0) -> float:
         """Block until the job reports a progress row (newer than after_ms); returns that time in ms."""
@@ -106,7 +108,10 @@ class Trial:
 
     def stop_job(self, kill: bool = False) -> None:
         if self.proc and self.proc.poll() is None:
-            self.proc.send_signal(signal.SIGKILL if kill else signal.SIGTERM)
+            if kill:
+                self.proc.kill()  # SIGKILL on POSIX, TerminateProcess on Windows
+            else:
+                self.proc.send_signal(signal.CTRL_BREAK_EVENT if os.name == "nt" else signal.SIGTERM)
             try:
                 self.proc.wait(timeout=90)
             except subprocess.TimeoutExpired:

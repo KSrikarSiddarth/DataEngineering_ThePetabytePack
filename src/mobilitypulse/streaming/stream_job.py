@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import shutil
 import signal
 import threading
 import time
@@ -24,6 +23,7 @@ from pyspark.sql.types import DoubleType, LongType, StringType, StructField, Str
 from ..batch.quality import add_derived, add_reject_reasons
 from ..common.config import Config, load_config
 from ..common.spark import get_spark
+from ..common.storage import rmtree
 from ..common.utils import get_logger
 
 log = get_logger(__name__)
@@ -50,7 +50,7 @@ def append_rows(path: Path, rows: list[dict]) -> None:
     with _csv_lock:
         path.parent.mkdir(parents=True, exist_ok=True)
         new = not path.exists()
-        with open(path, "a", newline="") as f:
+        with open(path, "a", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=list(rows[0]))
             if new:
                 w.writeheader()
@@ -198,8 +198,10 @@ class StreamJob:
 
     def monitor(self, duration_s: float | None = None) -> None:
         stop = threading.Event()
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            signal.signal(sig, lambda *_: stop.set())
+        # SIGBREAK: Windows Ctrl+Break / CTRL_BREAK_EVENT sent by the stream benchmark for a graceful stop
+        for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
+            if sig is not None:
+                signal.signal(sig, lambda *_: stop.set())
         seen: set[int] = set()
         t0 = time.time()
         while not stop.is_set() and self.metrics_q.isActive and self.dlq_q.isActive:
@@ -221,15 +223,15 @@ class StreamJob:
 def reset_outputs(cfg: Config, tag: str) -> None:
     for p in (cfg.path("checkpoints") / tag, cfg.path("stream_out"), cfg.path("stream_dlq")):
         if p.exists():
-            shutil.rmtree(p)
+            rmtree(p)
     # batch ids restart after a reset, so stale rows for the tag would be mixed into the new run's metrics
     for name in ("batches", "latency_samples", "progress"):
         path = cfg.path("results") / "stream" / f"{name}.csv"
         if path.exists():
-            with open(path, newline="") as f:
+            with open(path, newline="", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 fields, rows = reader.fieldnames, [r for r in reader if r["tag"] != tag]
-            with open(path, "w", newline="") as f:
+            with open(path, "w", newline="", encoding="utf-8") as f:
                 w = csv.DictWriter(f, fieldnames=fields)
                 w.writeheader()
                 w.writerows(rows)

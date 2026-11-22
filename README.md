@@ -1,5 +1,7 @@
 # NYC MobilityPulse
 
+> **Windows users:** see [README_WINDOWS.md](README_WINDOWS.md) for setup and [RUN_WINDOWS.md](RUN_WINDOWS.md) for run steps (`setup_windows.ps1` + `.\mp.cmd <task>` instead of `make`).
+
 **Scalable Taxi Demand Forecasting and Mobility Anomaly Detection**
 DA231O Data Engineering at Scale (IISc) · Team **The Petabyte Pack** — Mohammad Ayan Khan, K Srikar Siddarth, Chandana N, Ritesh T Patil
 
@@ -272,3 +274,19 @@ NYC TLC Trip Record Data and Taxi Zone Lookup (NYC Open Data, public); NOAA Inte
 725053-94728 Central Park, via the NOAA AWS Open Data bucket `noaa-global-hourly-pds` (public domain).
 No proprietary data is used and raw data is never committed.
 
+
+## 13. Distributed mode: Spark standalone cluster + MinIO (SetupF)
+
+Everything above runs Spark as `local[*]` on one machine. The same code also runs on a Spark standalone cluster with
+the data lake on an S3-compatible store (MinIO), so executors on other machines read and write the data:
+
+```bash
+cp setupF.env.example setupF.env           # MASTER_IP, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, memory, cores
+make cluster-check CLUSTER=1                 # Windows: .\mp.cmd check -Cluster
+make pipeline MONTHS=medium CLUSTER=1        # Windows: .\mp.cmd pipeline -Months medium -Cluster
+```
+
+`CLUSTER=1` / `-Cluster` selects the `setupf` profile (`configs/profile_setupf.yaml`): `paths.data_dir` becomes
+`s3a://lake/mobilitypulse`, `spark.master` becomes `spark://<MASTER_IP>:7077`. Downloads, the pipeline state table and the
+serving DB stay on the driver machine. Benchmarks, `concepts` and the test suite always run locally. The full
+procedure for the two Azure VMs is in `RunMobilityPulse_SetupF.md`.

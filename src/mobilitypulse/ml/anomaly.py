@@ -14,6 +14,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from ..common.config import Config
+from ..common.storage import write_parquet_pandas
 from ..common.utils import get_logger, read_parquet, record_measurements, write_parquet
 from .metrics import binary_metrics
 from .train import load_best_model_name
@@ -162,8 +163,7 @@ def run_anomaly(spark: SparkSession, cfg: Config) -> dict:
 
     rows = [{"evaluation": k.split(":")[0], "detector": k.split(":")[1], **v} for k, v in results.items()]
     out = cfg.path("gold") / "anomaly_metrics"
-    out.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(rows).to_parquet(out / "anomaly_metrics.parquet", index=False)
+    write_parquet_pandas(pd.DataFrame(rows), out / "anomaly_metrics.parquet")
 
     inj, rule, live = results["injected:residual_flag"], results["rule:residual_flag"], results["real:residual_flag"]
     # Diagnostic for A4b: with `alerts` residual alerts against `positives` rule labels, recall can never exceed

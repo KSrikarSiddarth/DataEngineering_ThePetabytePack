@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .config import Config
+from .storage import AnyPath
 
 _LOG_CONFIGURED = False
 
@@ -41,7 +42,7 @@ class Timer:
 
 
 # ---------------------------------------------------------------- parquet IO
-def write_parquet(df, path: Path, partition_by: list[str] | None = None, mode: str = "overwrite",
+def write_parquet(df, path: AnyPath, partition_by: list[str] | None = None, mode: str = "overwrite",
                   replace_all: bool = False) -> None:
     """Overwrite only the partitions present in df (idempotent per month) unless replace_all."""
     writer = df.write.mode(mode)
@@ -52,8 +53,8 @@ def write_parquet(df, path: Path, partition_by: list[str] | None = None, mode: s
     writer.parquet(str(path))
 
 
-def read_parquet(spark, path: Path, stage_hint: str = ""):
-    if not Path(path).exists():
+def read_parquet(spark, path: AnyPath, stage_hint: str = ""):
+    if not path.exists():
         hint = f" (run stage '{stage_hint}' first)" if stage_hint else ""
         raise FileNotFoundError(f"Missing dataset: {path}{hint}")
     return spark.read.parquet(str(path))
@@ -138,7 +139,7 @@ def _measurements_path(cfg: Config) -> Path:
 
 def load_measurements(cfg: Config) -> dict[str, Any]:
     p = _measurements_path(cfg)
-    return json.loads(p.read_text()) if p.exists() else {}
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
 
 
 def record_measurements(cfg: Config, values: dict[str, Any], context: dict[str, Any] | None = None) -> None:
@@ -153,11 +154,11 @@ def record_measurements(cfg: Config, values: dict[str, Any], context: dict[str, 
         data[key] = {"value": float(value) if isinstance(value, (int, float)) else value,
                      "recorded_at": now, "context": context or {}}
     fd, tmp = tempfile.mkstemp(dir=p.parent, suffix=".json")
-    with os.fdopen(fd, "w") as f:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)
     os.replace(tmp, p)
 
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, default=str))
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")

@@ -1,0 +1,10 @@
+tag,batch_id,commit_ms,rows_updated,lat_p50_ms,lat_p95_ms,lat_max_ms
+default,0,1795347886386,6785,67122.4,80347.0,82525.4
+default,1,1795347891894,228,62960.8,63096.8,63203.8
+default,2,1795347894309,0,nan,nan,
+default,3,1795347902416,0,nan,nan,
+default,4,1795347907006,0,nan,nan,
+default,5,1795347912004,0,nan,nan,
+default,6,1795347916839,0,nan,nan,
+default,7,1795347922347,0,nan,nan,
+default,8,1795347927498,0,nan,nan,

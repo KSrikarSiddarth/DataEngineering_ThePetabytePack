@@ -25,7 +25,7 @@ class FileSourceJob(StreamJob):
 def _write_batch(src, name, events):
     lines = [json.dumps({"key": k, "value": v, "partition": 0, "offset": i, "timestamp": "2026-11-07T10:00:00"})
              for i, (k, v) in events]
-    (src / name).write_text("\n".join(lines))
+    (src / name).write_text("\n".join(lines), encoding="utf-8")
 
 
 def test_stream_job_end_to_end(spark, base_cfg, tmp_path):

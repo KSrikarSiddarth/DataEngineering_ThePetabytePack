@@ -1,17 +1,30 @@
 # NYC MobilityPulse - developer commands. Run from this directory.
 # Paths in this repo contain spaces (OneDrive); every command below avoids $(CURDIR) for that reason.
 
+# CLUSTER=1 runs on the SetupF Spark cluster + MinIO (reads setupF.env; see RunMobilityPulse_SetupF.md).
+# The Python minor version must match the executors (Ubuntu 24.04 = 3.12), so the cluster venv is separate.
+ifeq ($(CLUSTER),1)
+export MP_PROFILE := setupf
+VENV        ?= $(HOME)/.venvs/mp312
+PYTHON311   ?= python3.12
+else
 VENV        ?= $(HOME)/.venvs/mp311
-PY          := $(VENV)/bin/python
 PYTHON311   ?= python3.11
+endif
+PY          := $(VENV)/bin/python
 COMPOSE     := docker compose -f infra/docker-compose.yml
 MONTHS      ?= default
 SAMPLE_DIR  ?= $(HOME)/mobilitypulse_sample
+ifeq ($(CLUSTER),1)
+DEMO_ENV    := MOBILITYPULSE_DATA_DIR=s3a://lake/mobilitypulse_sample MP__PATHS__LOCAL_DIR=$(SAMPLE_DIR)
+else
+DEMO_ENV    := MOBILITYPULSE_DATA_DIR=$(SAMPLE_DIR)
+endif
 export JAVA_HOME ?= /usr/lib/jvm/java-17-openjdk-amd64
 
 .PHONY: help setup ingest pipeline bronze silver demand features analytics ml anomaly export demo \
         kafka-up kafka-down kafka-ui kafka-topics stream produce bench-batch bench-stream scorecard \
-        api dashboard test test-fast clean-sample concepts incremental
+        api dashboard test test-fast clean-sample concepts incremental cluster-check
 
 help:
 	@grep -E '^[a-z-]+:.*?## ' Makefile | awk -F':.*?## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -36,7 +49,9 @@ ml anomaly export:
 	$(PY) -m mobilitypulse.cli --stage $@
 
 demo: ## synthetic data end-to-end in SAMPLE_DIR (no internet needed)
-	MOBILITYPULSE_DATA_DIR=$(SAMPLE_DIR) $(PY) -m mobilitypulse.cli --stage demo
+	$(DEMO_ENV) $(PY) -m mobilitypulse.cli --stage demo
+cluster-check: ## SetupF smoke test: MinIO reachable, executors registered, shuffle + UDF + s3a round trip (CLUSTER=1)
+	$(PY) -m mobilitypulse.cluster_check
 clean-sample: ## delete the synthetic sample data dir
 	rm -rf "$(SAMPLE_DIR)"
 

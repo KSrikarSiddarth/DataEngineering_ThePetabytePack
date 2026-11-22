@@ -164,7 +164,7 @@ elif page == "Live stream":
 elif page == "Benchmarks & scorecard":
     sc = results / "evaluation_scorecard.md"
     if sc.exists():
-        st.markdown(sc.read_text())
+        st.markdown(sc.read_text(encoding="utf-8"))
     bench = results / "benchmarks"
     for f in sorted(bench.glob("*.csv")) if bench.exists() else []:
         df = pd.read_csv(f)
@@ -175,4 +175,4 @@ elif page == "Benchmarks & scorecard":
     m = results / "measurements.json"
     if m.exists():
         with st.expander("Raw measurements"):
-            st.json(json.loads(m.read_text()))
+            st.json(json.loads(m.read_text(encoding="utf-8")))

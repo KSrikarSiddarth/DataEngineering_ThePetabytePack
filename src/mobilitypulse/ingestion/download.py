@@ -9,6 +9,7 @@ import pandas as pd
 import requests
 
 from ..common.config import Config
+from ..common.storage import is_remote, upload_tree
 from ..common.utils import get_logger
 
 log = get_logger(__name__)
@@ -103,6 +104,17 @@ def fetch(manifest: Manifest, source: str, url: str, dest: Path, period: str, fo
     return row
 
 
+def sync_raw(cfg: Config) -> int:
+    """Cluster mode: copy the downloaded raw files from the driver machine to the lake (MinIO), where the executors
+    read them. Only new or changed files are sent. No-op when the data lake is a local folder."""
+    lake = cfg.path("raw_lake")
+    if not is_remote(lake):
+        return 0
+    n = upload_tree(cfg.path("raw"), lake)
+    log.info("raw -> %s: %d file(s) uploaded", lake, n)
+    return n
+
+
 def run_ingest(cfg: Config, months: list[str], force: bool = False) -> list[dict]:
     src = cfg.section("sources")
     raw = cfg.path("raw")
@@ -116,4 +128,5 @@ def run_ingest(cfg: Config, months: list[str], force: bool = False) -> list[dict
         rows.append(fetch(manifest, "noaa_isd", f"{src['noaa_base_url']}/{year}/{station}.csv",
                           raw / "noaa" / f"{station}_{year}.csv", year, force))
     manifest.save()
+    sync_raw(cfg)
     return rows

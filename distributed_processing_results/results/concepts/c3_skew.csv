@@ -1,0 +1,5 @@
+variant,aqe_skew_join,seconds,join_stage_id,join_stage_tasks,task_read_median_mb,task_read_max_mb,read_skew_ratio,task_ms_median,task_ms_max,time_skew_ratio
+natural_data_aqe_off,False,0.833,49,32,0.149,0.964,6.5,222,352,1.6
+skewed_aqe_off,False,0.849,53,32,0.076,2.971,38.9,42,536,12.8
+skewed_aqe_skew_join,True,0.421,59,38,0.104,0.547,5.3,54,156,2.9
+skewed_manual_salting,False,0.878,66,32,0.607,4.665,7.7,235,395,1.7

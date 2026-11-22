@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 
 from ..common.config import Config
 from ..common.utils import get_logger, month_range, us_holidays
-from .download import Manifest, sha256_of
+from .download import Manifest, sha256_of, sync_raw
 
 log = get_logger(__name__)
 
@@ -185,4 +185,5 @@ def generate_sample(cfg: Config, months: list[str] | None = None, seed: int | No
         part.to_csv(path, index=False, quoting=1)
         register("noaa_isd", path, year)
     manifest.save()
+    sync_raw(cfg)
     return summary

@@ -19,20 +19,15 @@ htmlcov/
 results/stream/*.csv
 results/tests/
 
+output/
+
 .DS_Store
 .ipynb_checkpoints/
 
-# Data
-data/
-
-# Pipeline output
-output/
-
-# Python
+# Windows
+tools/
 .venv/
 __pycache__/
 .pytest_cache/
-
-# SetupE settings and secrets (see setupE.env.example)
-.env.setupE
-.env.setupF
+# SetupF cluster settings (hold the MinIO password)
+setupF.env

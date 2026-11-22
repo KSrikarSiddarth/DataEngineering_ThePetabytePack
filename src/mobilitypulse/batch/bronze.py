@@ -54,7 +54,7 @@ def normalize_tlc(df: DataFrame, source_file: str, month: str) -> DataFrame:
 
 
 def build_bronze_trips(spark: SparkSession, cfg: Config, months: list[str]) -> int:
-    raw = cfg.path("raw") / "tlc"
+    raw = cfg.path("raw_lake") / "tlc"
     dataset = cfg.section("sources")["tlc_dataset"]
     frames = []
     for month in months:
@@ -71,7 +71,7 @@ def build_bronze_trips(spark: SparkSession, cfg: Config, months: list[str]) -> i
 
 def build_bronze_zones(spark: SparkSession, cfg: Config) -> int:
     q = cfg.section("quality")
-    path = cfg.path("raw") / "reference" / "taxi_zone_lookup.csv"
+    path = cfg.path("raw_lake") / "reference" / "taxi_zone_lookup.csv"
     df = spark.read.option("header", True).csv(str(path))
     zones = df.select(
         F.col("LocationID").cast("int").alias("zone_id"),
@@ -118,7 +118,7 @@ def decode_noaa(df: DataFrame, local_tz: str) -> DataFrame:
 def build_bronze_weather(spark: SparkSession, cfg: Config, months: list[str]) -> int:
     station = cfg.section("sources")["noaa_station"]
     years = sorted({m[:4] for m in months})
-    paths = [str(cfg.path("raw") / "noaa" / f"{station}_{y}.csv") for y in years]
+    paths = [str(cfg.path("raw_lake") / "noaa" / f"{station}_{y}.csv") for y in years]
     df = spark.read.option("header", True).option("inferSchema", False).csv(paths)
     obs = decode_noaa(df, cfg.section("project")["timezone"])
     write_parquet(obs, cfg.path("bronze") / "weather_obs", partition_by=["year"])
@@ -126,6 +126,10 @@ def build_bronze_weather(spark: SparkSession, cfg: Config, months: list[str]) ->
 
 
 def run_bronze(spark: SparkSession, cfg: Config, months: list[str]) -> dict:
+    # cluster mode: executors read the raw files from the lake, so push anything downloaded locally (unchanged
+    # files are skipped by size; a no-op when the lake is a local folder)
+    from ..ingestion.download import sync_raw
+    sync_raw(cfg)
     return {
         "zones": build_bronze_zones(spark, cfg),
         "weather_obs": build_bronze_weather(spark, cfg, months),

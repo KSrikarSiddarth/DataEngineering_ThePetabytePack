@@ -1,0 +1,7 @@
+experiment,variant,rep,seconds,jobs,stages,tasks,shuffle_read_bytes,shuffle_write_bytes,spill_bytes,input_bytes
+e4_cache,uncached,1,3.317,10,10,60,102892,102892,0,273497442
+e4_cache,uncached,2,2.301,10,10,60,102892,102892,0,273497442
+e4_cache,uncached,3,1.316,10,10,60,102892,102892,0,273497442
+e4_cache,cached,1,11.658,13,13,83,103541,103541,0,9152010849
+e4_cache,cached,2,14.105,13,13,83,103541,103541,0,9152010849
+e4_cache,cached,3,10.536,13,13,83,103541,103541,0,9152010849
