@@ -12,6 +12,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from ..common.config import Config
+from ..common.storage import write_parquet_pandas
 from ..common.utils import Timer, get_logger, read_parquet, record_measurements, write_parquet
 from .metrics import grouped_regression_metrics, poisson_floor_by_group
 
@@ -222,8 +223,7 @@ def train_and_evaluate(spark: SparkSession, cfg: Config) -> dict:
     metrics["train_seconds"] = metrics["model"].map(lambda m: timings.get(m, {}).get("train_seconds"))
     metrics["infer_rows_per_sec"] = metrics["model"].map(lambda m: timings.get(m, {}).get("infer_rows_per_sec"))
     out = cfg.path("gold") / "model_metrics"
-    out.mkdir(parents=True, exist_ok=True)
-    metrics.to_parquet(out / "model_metrics.parquet", index=False)
+    write_parquet_pandas(metrics, out / "model_metrics.parquet")
     out_summary = summarise(cfg, metrics, timings, forecasts)
     feats.unpersist()
     return out_summary
@@ -234,7 +234,7 @@ def summarise(cfg: Config, metrics: pd.DataFrame, timings: dict, forecasts: Data
     ml_models = [m for m in [*cfg.section("ml")["models"], "ensemble"] if (m, "validation") in overall.index]
     best = min(ml_models, key=lambda m: overall.loc[(m, "validation"), "mae"])
     (cfg.path("models")).mkdir(parents=True, exist_ok=True)
-    (cfg.path("models") / "best_model.json").write_text(json.dumps({"model": best}))
+    (cfg.path("models") / "best_model.json").write_text(json.dumps({"model": best}), encoding="utf-8")
 
     def test_metric(model: str, metric: str):
         return float(overall.loc[(model, "test"), metric]) if (model, "test") in overall.index else None
@@ -279,7 +279,7 @@ def summarise(cfg: Config, metrics: pd.DataFrame, timings: dict, forecasts: Data
 
 
 def load_best_model_name(cfg: Config) -> str:
-    return json.loads((cfg.path("models") / "best_model.json").read_text())["model"]
+    return json.loads((cfg.path("models") / "best_model.json").read_text(encoding="utf-8"))["model"]
 
 
 def load_model(cfg: Config, name: str) -> PipelineModel:

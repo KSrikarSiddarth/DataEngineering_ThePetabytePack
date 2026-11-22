@@ -51,7 +51,7 @@ def ingest_test_reports(cfg: Config) -> None:
         values["tests.pass_pct"] = 100.0 * (run - bad) / run if run else None
     cov = tests / "coverage.json"
     if cov.exists():
-        values["tests.coverage_pct"] = json.loads(cov.read_text())["totals"]["percent_covered"]
+        values["tests.coverage_pct"] = json.loads(cov.read_text(encoding="utf-8"))["totals"]["percent_covered"]
     if values:
         record_measurements(cfg, values, {"source": "pytest"})
 
@@ -91,7 +91,7 @@ def build_scorecard(cfg: Config) -> list[dict]:
     rows = evaluate(load_targets(), load_measurements(cfg))
     out = cfg.path("results") / "evaluation_scorecard.md"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(rows))
+    out.write_text(render(rows), encoding="utf-8")
     log.info("scorecard written to %s", out)
     return rows
 

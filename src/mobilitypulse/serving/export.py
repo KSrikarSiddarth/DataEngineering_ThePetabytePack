@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import time
+from contextlib import closing
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -12,6 +14,7 @@ import pandas as pd
 import pyarrow.dataset as ds
 
 from ..common.config import Config
+from ..common.storage import AnyPath, arrow_location, read_parquet_pandas
 from ..common.utils import get_logger
 
 log = get_logger(__name__)
@@ -47,10 +50,11 @@ def _clean(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _read(path: Path, filter_expr=None) -> pd.DataFrame | None:
+def _read(path: AnyPath, filter_expr=None) -> pd.DataFrame | None:
     if not path.exists():
         return None
-    dataset = ds.dataset(str(path), format="parquet", partitioning="hive",
+    fs, location = arrow_location(path)  # fs is None for a local folder, the MinIO filesystem for s3a://
+    dataset = ds.dataset(location, filesystem=fs, format="parquet", partitioning="hive",
                          exclude_invalid_files=True, ignore_prefixes=["_", "."])
     return _clean(dataset.to_table(filter=filter_expr).to_pandas())
 
@@ -81,15 +85,28 @@ def build_tables(cfg: Config) -> dict[str, pd.DataFrame]:
 
     best_file = cfg.path("models") / "best_model.json"
     if best_file.exists():
-        best = json.loads(best_file.read_text())["model"]
+        best = json.loads(best_file.read_text(encoding="utf-8"))["model"]
         tables["forecasts"] = _read(gold / "forecasts", (ds.field("model") == best) & (ds.field("split") == "test"))
     for name in ["model_metrics", "anomaly_metrics"]:
         f = gold / name / f"{name}.parquet"
-        tables[name] = _clean(pd.read_parquet(f)) if f.exists() else None
+        tables[name] = _clean(read_parquet_pandas(f)) if f.exists() else None
     tables["anomalies"] = _read(gold / "anomalies")
     tables["data_quality_daily"] = _read(gold / "data_quality_daily")
     tables["stream_latest"] = _latest_stream(cfg.path("stream_out"))
     return {k: v for k, v in tables.items() if v is not None}
+
+
+def _atomic_replace(src: Path, dst: Path, attempts: int = 10) -> None:
+    """os.replace with retries: on Windows the target cannot be replaced while a reader has it open."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                raise PermissionError(f"cannot replace {dst}: it is open in another process "
+                                      "(stop the API / dashboard and run the export again)") from None
+            time.sleep(0.5)
 
 
 def export_serving_db(cfg: Config) -> dict[str, int]:
@@ -99,13 +116,14 @@ def export_serving_db(cfg: Config) -> dict[str, int]:
     if tmp.exists():
         tmp.unlink()
     tables = build_tables(cfg)
-    with sqlite3.connect(tmp) as con:
+    # closing(): sqlite3's own context manager only commits; the file must be closed before os.replace (Windows)
+    with closing(sqlite3.connect(tmp)) as con, con:
         for name, df in tables.items():
             df.to_sql(name, con, index=False, if_exists="replace")
             for col in INDEXES.get(name, []):
                 if col in df.columns:
                     con.execute(f'CREATE INDEX IF NOT EXISTS "ix_{name}_{col}" ON "{name}" ("{col}")')
-    os.replace(tmp, db)  # atomic swap so readers never see a half-written DB
+    _atomic_replace(tmp, db)  # atomic swap so readers never see a half-written DB
     counts = {k: len(v) for k, v in tables.items()}
     log.info("serving DB %s: %s", db, counts)
     return counts

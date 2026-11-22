@@ -41,7 +41,7 @@ def test_batch_experiments_record_measurements(spark, bench_env):
 
 def test_scorecard_file(bench_env):
     rows = build_scorecard(bench_env)
-    text = (bench_env.path("results") / "evaluation_scorecard.md").read_text()
+    text = (bench_env.path("results") / "evaluation_scorecard.md").read_text(encoding="utf-8")
     assert "| B4 |" in text and any(r["status"] in ("PASS", "FAIL") for r in rows)
 
 

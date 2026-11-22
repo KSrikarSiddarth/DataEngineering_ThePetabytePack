@@ -1,0 +1,7 @@
+# Python packages the Spark executors (VM2) need. Python must be the same minor version as the driver (3.12).
+# The mobilitypulse package itself is shipped by the driver (spark.ship_package), so it is not installed here.
+pyspark==3.5.3
+numpy>=1.26,<2.1
+pandas>=2.1,<2.4
+pyarrow>=15,<22
+setuptools

@@ -31,7 +31,7 @@ def test_c1_transformations_run_no_jobs_but_actions_do(spark, env):
     assert by_kind["transformation"] == [0] * 5
     assert by_kind["plan"] == [0]
     assert all(j > 0 for j in by_kind["action"])
-    plan = (env.path("results") / "concepts" / "c1_lazy_plan.txt").read_text()
+    plan = (env.path("results") / "concepts" / "c1_lazy_plan.txt").read_text(encoding="utf-8")
     assert "Exchange" in plan and "PushedFilters" in plan
 
 

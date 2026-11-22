@@ -34,7 +34,7 @@ def save_plan(cfg: Config, name: str, df: DataFrame, mode: str = "formatted") ->
     """Write df.explain(mode) to results/concepts/<name>.txt and return the path."""
     path = out_dir(cfg) / f"{name}.txt"
     path.write_text(df._jdf.queryExecution().explainString(
-        spark_explain_mode(df.sparkSession, mode)))
+        spark_explain_mode(df.sparkSession, mode)), encoding="utf-8")
     return path
 
 

@@ -91,4 +91,4 @@ def test_serving_db_and_api(pipeline):
     assert isinstance(zone, list)
     metrics = client.get("/metrics/latest").json()
     assert {m["model"] for m in metrics["forecast"]} >= {"persistence", "seasonal_naive", "gbt"}
-    assert json.loads((pipeline["cfg"].path("models") / "best_model.json").read_text())["model"]
+    assert json.loads((pipeline["cfg"].path("models") / "best_model.json").read_text(encoding="utf-8"))["model"]

@@ -13,6 +13,7 @@ import pandas as pd
 import pyarrow.dataset as ds
 
 from ..common.config import Config, load_config
+from ..common.storage import arrow_location
 from ..common.utils import get_logger
 
 log = get_logger(__name__)
@@ -70,7 +71,8 @@ def make_malformed(event: dict, kind: str) -> bytes:
 
 
 def load_events(cfg: Config, month: str, max_events: int | None) -> pd.DataFrame:
-    dataset = ds.dataset(str(cfg.path("bronze") / "trips"), format="parquet", partitioning="hive")
+    fs, location = arrow_location(cfg.path("bronze") / "trips")
+    dataset = ds.dataset(location, filesystem=fs, format="parquet", partitioning="hive")
     table = dataset.to_table(filter=ds.field("source_month") == month,
                              columns=[c for c in EVENT_FIELDS if c != "source_month"])
     df = table.to_pandas()
@@ -167,7 +169,7 @@ def replay(cfg: Config, rate: float | None = None, max_events: int | None = None
 def _append_csv(path: Path, row: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     new = not path.exists()
-    with open(path, "a", newline="") as f:
+    with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(row))
         if new:
             w.writeheader()
