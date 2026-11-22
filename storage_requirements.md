@@ -10,7 +10,7 @@ How much disk the project needs, and where it goes. **Every number below is an e
 
 ## 1. Summary
 
-**Plan for about 80 GB (range 72–85) as built; about 55–60 GB with the two reductions in Section 6; keep that much free.**
+**Plan for about 75 GB (range 69–81) as built; about 55–60 GB with the two reductions in Section 6; keep that much free.**
 
 | Item | Estimate | Needed from | Freed afterwards? |
 |---|---|---|---|
@@ -19,10 +19,10 @@ How much disk the project needs, and where it goes. **Every number below is an e
 | Gold marts, stream and batch (daily, monthly, health) | under 1 GB | M4, M5 | No |
 | Spark ML: features (sample), predictions, models, metrics | 1–3 GB | M6 | No |
 | Spark temporary files (sort and shuffle spill, mostly HVFHV) | about 5 GB | M5 | Yes, when the job ends |
-| Stream path: Kafka data (Bronze), Silver, Gold, checkpoints | 2–3 GB | M1–M4 | Kafka data with `docker compose down -v` |
-| Docker images (Kafka, Spark, producer, Kafka UI) and Docker/WSL disk overhead | about 3–4 GB | M1 | With `docker system prune` |
+| Stream path: Kafka data (Bronze), Silver, Gold, checkpoints | 2–3 GB | M1–M4 | Kafka data with `rm -rf ~/kafka-data` (run.md section 7) |
+| Kafka install (only for the live stream) | about 0.2 GB | M1 | No |
 | Python virtualenv (PySpark, DuckDB, pyarrow, pytest) and Spark jars | about 1 GB | M2 | No |
-| **Total** | **about 72–85 GB** | | |
+| **Total** | **about 69–81 GB** | | |
 
 ## 2. Raw input files (`data/`) — Bronze
 
@@ -60,9 +60,7 @@ Per month, from the 2026-01 files:
 ## 4. Temporary and system storage
 
 - **Spark spill (about 5 GB, batch only).** Sorting and shuffling a month of HVFHV spills to the local temp folder. The job processes one month at a time, so the peak does not grow with the number of months. It is freed when the job ends. Put it on a drive with room (`spark.local.dir`).
-- **Kafka data (about 1–3 GB).** JSON messages are larger than the Parquet they came from. Retention is 1 day. `docker compose down -v` deletes it.
-- **Docker images (about 3–4 GB).** The Spark image (Python, Java, PySpark, Kafka connector jars) is the largest, at roughly 1.5 GB. Kafka is about 0.4 GB. The `spark-batch` and `spark-ml` services reuse the Spark image, so they add no image size.
-- **Docker/WSL disk file.** Docker Desktop keeps images, containers and volumes in a virtual disk (`.vhdx`) that grows but does not shrink by itself. Budget for it to stay at its high-water mark.
+- **Kafka data (about 1–3 GB).** JSON messages are larger than the Parquet they came from. Retention is 1 day. It lives in `~/kafka-data`; the reset in `run.md` section 7 deletes it.
 
 ## 5. Scenarios
 
@@ -71,7 +69,7 @@ Per month, from the 2026-01 files:
 | Stream only (M1–M4) | none | about 8–10 GB |
 | Batch, small (development) | 3 | about 22 GB |
 | Original proposal (too short for several catalog KPIs) | 12 | about 47 GB |
-| **Default plan** | **24** | **about 72–85 GB** |
+| **Default plan** | **24** | **about 69–81 GB** |
 | Covers the 2022 Airport fee comparison too | 49 (2022-01 to 2026-01) | about 145 GB |
 | Default plus the uncapped HVFHV month in the stream (stretch) | 24 | add several GB for Kafka and the stream output |
 
@@ -92,7 +90,7 @@ With both, HVFHV Silver would be about 19–26 GB and the whole plan about 55–
 - Download fewer months: set the range in `config.yaml` (`batch:` section) and pass `--months` to the download script. Check which catalog KPIs then show "not enough history".
 - Skip HVFHV for batch runs (`datasets` in the same section). It removes about 85% of the input and Silver, and the HVFHV KPIs and models.
 - Delete `output/` and `output/checkpoints` together when resetting (see `run.md`).
-- Run `docker system prune` to remove unused images, and `docker compose down -v` to remove Kafka data.
+- Delete Kafka data with the reset in `run.md` section 7.
 - After the batch job, delete the Spark temp folder if it was placed outside the job's own cleanup.
 
 ## 7. To measure later

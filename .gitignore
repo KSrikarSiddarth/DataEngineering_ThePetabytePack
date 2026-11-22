@@ -8,3 +8,7 @@ output/
 .venv/
 __pycache__/
 .pytest_cache/
+
+# SetupE settings and secrets (see setupE.env.example)
+.env.setupE
+.env.setupF

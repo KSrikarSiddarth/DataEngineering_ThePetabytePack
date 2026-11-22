@@ -2,18 +2,21 @@
 
 Idempotent: topics that already exist are left alone (a warning is printed if
 their partition count differs from the config). Exits non-zero if any topic is
-missing at the end, so `docker compose` surfaces the failure.
+missing at the end.
+
+    python scripts/create_topics.py      # broker from config.yaml (localhost:9092), or KAFKA_BOOTSTRAP
 """
 import os
 import sys
 import time
+from pathlib import Path
 
 import yaml
 from confluent_kafka import KafkaError, KafkaException
 from confluent_kafka.admin import AdminClient, NewTopic
 
-CONFIG_PATH = os.environ.get("CONFIG_PATH", "/config/config.yaml")
-BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP", "kafka:29092")
+CONFIG_PATH = os.environ.get("CONFIG_PATH") or Path(__file__).resolve().parent.parent / "config.yaml"
+BOOTSTRAP = os.environ.get("KAFKA_BOOTSTRAP") or yaml.safe_load(open(CONFIG_PATH, encoding="utf-8"))["kafka"]["bootstrap_servers"]
 CONNECT_TIMEOUT_S = int(os.environ.get("CONNECT_TIMEOUT_S", "60"))
 
 

@@ -5,6 +5,7 @@ Usage:
     python scripts/download_data.py --datasets green fhv  # subset
     python scripts/download_data.py --months 2026-01 2026-02
     python scripts/download_data.py --batch               # the batch month range (batch: in config.yaml)
+    python scripts/download_data.py --zones --months 2025-12   # also the zone lookup (data/taxi_zones/)
 
 Skips files that already exist and are valid Parquet. Downloads to a .part file
 and renames on success, so an interrupted download never leaves a bad file.
@@ -22,6 +23,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data"
+ZONES_URL = "https://d37ci6vzurychx.cloudfront.net/misc/taxi_zone_lookup.csv"
 FILE_PREFIX = {
     "yellow": "yellow_tripdata",
     "green": "green_tripdata",
@@ -78,6 +80,7 @@ def main() -> int:
     ap.add_argument("--datasets", nargs="+", choices=FILE_PREFIX, default=list(FILE_PREFIX))
     ap.add_argument("--months", nargs="+")
     ap.add_argument("--batch", action="store_true", help="the batch month range from config.yaml")
+    ap.add_argument("--zones", action="store_true", help="also fetch taxi_zone_lookup.csv into <data-dir>/taxi_zones/")
     ap.add_argument("--data-dir", default=str(ROOT / "data"))
     args = ap.parse_args()
     months = args.months or (month_range(cfg["batch"]["start_month"], cfg["batch"]["end_month"]) if args.batch
@@ -85,6 +88,11 @@ def main() -> int:
 
     data_dir = Path(args.data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
+    zones = data_dir / "taxi_zones" / "taxi_zone_lookup.csv"
+    if args.zones and not zones.exists():
+        zones.parent.mkdir(parents=True, exist_ok=True)
+        print(f"download {zones.name}")
+        download(ZONES_URL, zones)
     published_file = data_dir / "tlc_published.json"
     published = json.loads(published_file.read_text()) if published_file.exists() else {}
     failures = 0

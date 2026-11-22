@@ -1,5 +1,5 @@
 """M5 tests: the batch job end to end on small synthetic monthly files, the KPI queries on DuckDB and Spark SQL,
-and the stream+batch combined views. Needs Spark and Java, no Docker."""
+and the stream+batch combined views. Needs Spark and Java."""
 import json
 import shutil
 import sys

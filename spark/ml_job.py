@@ -25,7 +25,6 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from itertools import accumulate
-from pathlib import Path
 from statistics import mean, stdev
 
 import pyspark.sql.functions as F
@@ -37,6 +36,7 @@ from pyspark.ml.feature import PCA, StandardScaler, VectorAssembler
 from pyspark.ml.regression import GBTRegressor, LinearRegression
 
 from ml_features import FEATURES, LABELS, ROWS, TRIP, trip_features, zone_hour
+from storage import exists, join
 from stream_job import build_spark, load_config
 
 METRIC_SCHEMA = "model string, metric string, scope string, value double"
@@ -222,7 +222,7 @@ def run_model(name, table, cfg, out_dir, rows):
     rows += [(name, c, "drift", v) for c, v in feature_drift(data, features)]
 
     out = pred.select(*spec["keys"], "ym", label, F.col(pred_col).alias("prediction"), "baseline")
-    out.withColumn("error", F.col("prediction") - F.col(label)).write.mode("overwrite").parquet(str(out_dir / spec["out"]))
+    out.withColumn("error", F.col("prediction") - F.col(label)).write.mode("overwrite").parquet(join(out_dir, spec["out"]))
     print(f"{name:16} {primary}={test_scores[primary]:.4f} baseline={base_scores[primary]:.4f} "
           f"train={train.count()} test={test.count()}")
     return model, train, test
@@ -275,7 +275,7 @@ def zone_clusters(gold, cfg, out_dir, rows):
                   "zone_clusters", rows)
     if out is not None:
         out.select("pu_location_id", "cluster", "avg_distance", "avg_fare").write.mode("overwrite") \
-            .parquet(str(out_dir / "ml_zone_clusters"))
+            .parquet(join(out_dir, "ml_zone_clusters"))
 
 
 def demand_patterns(gold, cfg, out_dir, rows):
@@ -290,7 +290,7 @@ def demand_patterns(gold, cfg, out_dir, rows):
     if out is not None:
         out.join(shapes.select("pickup_date", "day_of_week"), "pickup_date") \
             .select("pickup_date", "day_of_week", "cluster").write.mode("overwrite") \
-            .parquet(str(out_dir / "ml_demand_pattern_clusters"))
+            .parquet(join(out_dir, "ml_demand_pattern_clusters"))
 
 
 def detect_anomalies(fare, cfg, out_dir, rows):
@@ -329,7 +329,7 @@ def detect_anomalies(fare, cfg, out_dir, rows):
     scored.where(F.col("flag") & ~F.col("bad")).select(
         "trip_id", "service_type", "pickup_ts", "distance_miles", "base_fare", F.col("prediction").alias("predicted_fare"),
         (F.col("base_fare") - F.col("prediction")).alias("residual"), "speed_mph").write.mode("overwrite") \
-        .parquet(str(out_dir / "ml_trip_anomalies"))
+        .parquet(join(out_dir, "ml_trip_anomalies"))
     print(f"anomaly          recall={ratio('tp', 'bad'):.3f} precision={ratio('tp', 'flagged'):.3f} "
           f"flagged_rate={ratio('clean_flagged', 'clean'):.4f}")
 
@@ -362,24 +362,24 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     cfg = load_config()["ml"]
-    base = Path(args.batch_dir or cfg["batch_dir"])
+    base = args.batch_dir or cfg["batch_dir"]
     wanted = set(args.models or list(MODELS) + UNSUPERVISED)
     if "anomaly" in wanted:
         wanted.add("fare")
     spark = build_spark(cfg)
     spark.sparkContext.setLogLevel("WARN")
-    gold, features_dir, out_dir = (lambda mart: spark.read.parquet(str(base / "gold" / mart))), base / "silver" / "ml_features", base / "gold"
-    if not (base / "silver" / "trips").exists():
+    gold, features_dir, out_dir = (lambda mart: spark.read.parquet(join(base, "gold", mart))), join(base, "silver", "ml_features"), join(base, "gold")
+    if not exists(spark, join(base, "silver", "trips")):
         print(f"no batch Silver in {base}; run batch_job.py first")
         return 1
 
     zh, zone_demand = zone_hour(gold("zone_od_daily"), cfg["holidays"])
-    zh.write.mode("overwrite").parquet(str(features_dir / "zone_hour"))
-    trips = trip_features(spark.read.parquet(str(base / "silver" / "trips")), zone_demand, cfg["holidays"],
+    zh.write.mode("overwrite").parquet(join(features_dir, "zone_hour"))
+    trips = trip_features(spark.read.parquet(join(base, "silver", "trips")), zone_demand, cfg["holidays"],
                           cfg["sample_rows"], cfg["seed"])
-    trips.write.mode("overwrite").parquet(str(features_dir / "trips"))
-    tables = {"zone_hour": spark.read.parquet(str(features_dir / "zone_hour")),
-              "trips": spark.read.parquet(str(features_dir / "trips")).cache()}
+    trips.write.mode("overwrite").parquet(join(features_dir, "trips"))
+    tables = {"zone_hour": spark.read.parquet(join(features_dir, "zone_hour")),
+              "trips": spark.read.parquet(join(features_dir, "trips")).cache()}
 
     rows, fare = [], None
     for name, spec in MODELS.items():
@@ -397,8 +397,8 @@ def main(argv=None):
 
     run = (uuid.uuid4().hex[:12], datetime.now(timezone.utc))
     spark.createDataFrame([(m, k, s, float(v)) for m, k, s, v in rows], METRIC_SCHEMA).select(F.lit(run[0]).alias("run_id"), F.lit(run[1]).alias("run_ts"), "*") \
-        .write.mode("append").parquet(str(out_dir / "ml_model_metrics"))
-    print(f"run {run[0]}: {len(rows)} metric rows -> {out_dir / 'ml_model_metrics'}")
+        .write.mode("append").parquet(join(out_dir, "ml_model_metrics"))
+    print(f"run {run[0]}: {len(rows)} metric rows -> {join(out_dir, 'ml_model_metrics')}")
     return 0
 
 

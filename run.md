@@ -1,279 +1,221 @@
-# run.md — Start the project and view the results
+# run.md: run the project and view the results
 
-Commands are for PowerShell from the project root. Steps 2 onward need Docker Desktop (see `installation.md`).
+Everything runs directly on the machine: Python, Java and Spark. Kafka is only needed for the live stream (section 7).
+Run every command from the project root. The paths in `config.yaml` (`data/`, `output/`) are relative to it.
 
-**What has been verified.** The producer, the Spark transformations and the streaming job were run on a dev machine **without Docker** (Section 7). The Docker path in Sections 2 to 5 (Kafka, the producer containers, the Spark container) is written but **has not been run yet**. If a command fails, check Section 12.
+Commands are bash, as on the Ubuntu VMs. In Windows PowerShell:
+
+| Bash | PowerShell |
+|---|---|
+| `source .venv/bin/activate` | `.venv\Scripts\Activate.ps1` |
+| `X=1 python ...` | `$env:X="1"; python ...` (unset with `Remove-Item Env:X`) |
+
+To run on a cluster instead of one machine, see `Run_SetupE.md` (SetupE) or `../SetupF.md` (SetupC with MinIO).
 
 ## 1. One-time setup
 
-```powershell
-# Python environment for the download script, tests and dry runs
-python -m venv .venv
-.venv\Scripts\Activate.ps1
+Needs Python 3.12 and Java 17 (`installation.md`).
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-
-# Download the trip files into data/ (Yellow is ~61 MB, Green ~1 MB, FHV ~21 MB, HVFHV ~482 MB)
-python scripts/download_data.py
+python scripts/download_data.py --zones --months 2025-12 --datasets yellow green fhv   # ~83 MB, plus the zone lookup
 ```
 
-`data/` must also hold `taxi_zones/taxi_zone_lookup.csv`. Check:
+- **File sizes:** Yellow is about 61 MB per month, Green about 1 MB, FHV about 21 MB and HVFHV about 482 MB.
+- **Default range:** `python scripts/download_data.py --batch` downloads the whole range in `config.yaml` (2025-10 to 2025-12, about 1.7 GB).
 
-```powershell
-docker --version; docker compose version
-Get-ChildItem data
+## 2. Batch: monthly files to Silver and Gold
+
+The batch path needs no Kafka. It reads `data/` and writes `output/batch/{silver,silver_invalid,gold}`.
+
+```bash
+python spark/batch_job.py --months 2025-12 --datasets yellow green fhv
+python spark/batch_job.py                                   # the whole batch range in config.yaml
 ```
 
-## 2. Start Kafka
+- **Speed:** about 1 minute per small file on a 2 core machine. A month of HVFHV (about 21 million trips) takes much longer.
+- **Reruns:** rerunning a month replaces only that month's partitions and adds a row to `silver/batch_run_log`.
+- **Failures:** a missing file is logged as failed and the run continues. The exit code is 1 if any file failed.
+- **Settings:** cores, driver memory and shuffle partitions are in `config.yaml` (`batch:`). The default `spark_master: local[2]` uses two cores.
 
-```powershell
-docker compose up -d kafka kafka-init
-docker compose ps                      # kafka = healthy, kafka-init = exited (0)
-docker compose logs kafka-init         # "created taxi.yellow.raw" ... "ok 5 topics ready"
+## 3. Check and query the batch output
+
+```bash
+python scripts/reconcile.py --batch                 # source rows = silver + invalid + duplicates, per file (diff 0)
+python scripts/combined_views.py                    # writes output/combined.duckdb
+python scripts/benchmark_queries.py --no-spark      # every KPI query on DuckDB (drop --no-spark to add Spark SQL)
 ```
 
-Optional web UI at http://localhost:8080:
+- **The KPI queries** are in `scripts/queries/*.sql`, covering growth, service share, revenue, fees, efficiency, peak
+  hours, zones, driver pay, batch health, data-quality drift and live versus baseline.
+- **Missing history:** a value that needs months that aren't loaded is NULL, with the status "not enough history".
+- **Ratios:** Gold holds sums, so compute ratios in the query, for example `sum(sum_total_amount) / sum(trips)`.
 
-```powershell
-docker compose --profile ui up -d kafka-ui
+## 4. Spark ML
+
+The ML job reads the batch store and writes `output/batch/silver/ml_features` and `output/batch/gold/ml_*`. Load at
+least two months first, because the lag features look back 168 hours.
+
+```bash
+python spark/ml_job.py --models fare anomaly        # a subset (anomaly needs fare)
+python spark/ml_job.py                              # all models
+python scripts/evaluate_models.py                   # the latest run against evaluation.md
 ```
 
-## 3. Send the taxi data (producers)
+Settings are in `config.yaml` (`ml:`). On a 2 core machine, two months with the defaults take about 25 minutes.
 
-Quick test, 1000 messages per dataset with no faults and no waiting:
+## 5. Dashboard
 
-```powershell
-$env:MAX_RECORDS="1000"; $env:REPLAY_SPEEDUP="0"; $env:QUALITY_PROFILE="clean"
-docker compose --profile producers up producer-yellow producer-green producer-fhv producer-hvfhv
+```bash
+streamlit run dashboard/app.py --server.address localhost      # http://localhost:8501
 ```
 
-Realistic stream: leave the variables unset (`Remove-Item Env:MAX_RECORDS, Env:REPLAY_SPEEDUP, Env:QUALITY_PROFILE`). Defaults come from `config.yaml`:
+- **What it reads:** the Parquet files in `output/`, through DuckDB. A page without data says what to run.
+- **Reload data:** use the button after each new run.
+- **On a VM:** view it through `ssh -L 8501:localhost:8501 <vm>`.
 
-- `replay_speedup: 3600` replays one simulated hour per real second, so the full month takes about 12 minutes;
-- HVFHV is capped at 500,000 records;
-- the `realistic` quality profile is active (about 2% nulls, 0.5% rule violations, a few duplicates, late and out-of-order records, and rare malformed JSON).
+## 6. Stream without Kafka (verified)
 
-Use `$env:QUALITY_PROFILE="messy"` for a heavier fault load, or `clean` for none.
+The producers write NDJSON files instead of sending to Kafka, and the same Spark streaming code reads those files.
+This is the simplest way to see the stream path on one machine, including Windows.
 
-Each producer prints a JSON summary at the end and writes it to `output/producer-stats/<dataset>.json`.
+```bash
+python scripts/download_data.py --months 2026-01               # the streamed month (config.yaml streaming.months)
 
-Run a single dataset: `docker compose --profile producers up producer-green`.
+mkdir -p /tmp/streamrun/in
+for d in yellow green fhv hvfhv; do
+  MAX_RECORDS=500 REPLAY_SPEEDUP=0 QUALITY_PROFILE=messy STATS_DIR=/tmp/streamrun/out/producer-stats \
+    python producer/producer.py --dataset $d --dry-run --out /tmp/streamrun/in/$d.ndjson
+done
 
-## 4. Check what is in Kafka
+OUTPUT_DIR=/tmp/streamrun/out/stream CHECKPOINT_DIR=/tmp/streamrun/out/checkpoints \
+  python spark/stream_job.py --source files --input-dir /tmp/streamrun/in
 
-```powershell
-# Message count per topic (end offsets)
-docker compose exec kafka /opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:29092 --topic taxi.green.raw
-
-# Read the first 3 messages, with keys
-docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 `
-  --topic taxi.green.raw --from-beginning --max-messages 3 --property print.key=true
-
-# See injected-fault tags (the `fault` header) 
-docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:29092 `
-  --topic taxi.yellow.raw --from-beginning --max-messages 20 --property print.headers=true
+python scripts/reconcile.py --output-dir /tmp/streamrun/out
+python scripts/show_results.py --output-dir /tmp/streamrun/out
 ```
 
-In Kafka UI: Topics → `taxi.*.raw` → Messages.
+- **On Windows:** use a short folder such as `$env:TEMP\m3run`, because the 260-character path limit breaks reads.
+- **Start-up time:** HVFHV takes about 12 seconds to start, because it sorts 20.9 million timestamps.
+- **Without HVFHV:** to skip the large download, leave `hvfhv` out of both lists.
 
-## 5. Run Spark (Silver and Gold)
+## 7. Stream with Kafka (Linux)
 
-Process everything currently in Kafka, then stop:
+Run Kafka natively on a Linux machine, such as the Ubuntu VM. It needs Java 17 and about 1 GB of RAM. This path has not been run.
 
-```powershell
-$env:TRIGGER_MODE="available_now"
-docker compose --profile spark up --build spark-job
+**Install and start a single broker (KRaft, no ZooKeeper):**
+
+```bash
+cd ~ && wget https://archive.apache.org/dist/kafka/3.9.0/kafka_2.13-3.9.0.tgz
+tar xzf kafka_2.13-3.9.0.tgz && mv kafka_2.13-3.9.0 kafka && cd kafka
+cat >> config/kraft/server.properties <<EOF
+log.dirs=$HOME/kafka-data
+auto.create.topics.enable=false
+advertised.listeners=PLAINTEXT://localhost:9092,CONTROLLER://localhost:9093
+EOF
+bin/kafka-storage.sh format -t "$(bin/kafka-storage.sh random-uuid)" -c config/kraft/server.properties
+KAFKA_HEAP_OPTS="-Xms512m -Xmx1g" bin/kafka-server-start.sh -daemon config/kraft/server.properties
 ```
 
-Or keep it running as a live stream (new messages are picked up every 10 seconds), in the background:
+- **Duplicate keys:** the appended lines override the file's earlier values, because the last value wins.
+- **On a cluster:** Spark executors on other machines need to reach Kafka. Replace `localhost` in `advertised.listeners` with the VM's private IP, and pass `KAFKA_BOOTSTRAP=<VM IP>:9092` to the commands below.
+- **Stopping:** `~/kafka/bin/kafka-server-stop.sh`.
 
-```powershell
-Remove-Item Env:TRIGGER_MODE -ErrorAction SilentlyContinue
-docker compose --profile spark up -d --build spark-job
-docker compose logs -f spark-job
+**Create the topics, send the data, run Spark:**
+
+```bash
+pip install -r producer/requirements.txt                     # confluent-kafka
+python scripts/create_topics.py                              # "ok 5 topics ready"
+
+# Quick test: 1000 messages per dataset, no faults, no waiting (drop the three variables for the realistic stream)
+for d in yellow green fhv hvfhv; do
+  MAX_RECORDS=1000 REPLAY_SPEEDUP=0 QUALITY_PROFILE=clean STATS_DIR=output/producer-stats \
+    python producer/producer.py --dataset $d &
+done; wait
+
+SPARK_PACKAGES=org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3 TRIGGER_MODE=available_now python spark/stream_job.py
 ```
 
-Start the Spark job **before** the producers for a live stream, or after them to process the backlog. Either way it reads from the earliest offset the first time.
+- **Live stream:** leave out `TRIGGER_MODE=available_now`. The job then picks up new messages every 10 seconds.
+- **First run:** it reads from the earliest offset, so starting before or after the producers both work.
+- **Producer defaults** (`config.yaml`):
+  - `replay_speedup: 3600` replays the month in about 12 minutes.
+  - HVFHV is capped at 500,000 records.
+  - The `realistic` quality profile is used (set `QUALITY_PROFILE=messy` or `clean` to change it).
+- **Gold timing:** a Gold hour is written only after the 10-minute watermark passes it, so the newest hours appear later.
+- **Producer stats:** each producer writes a summary to `output/producer-stats/<dataset>.json`.
 
-The job runs two stages in one process: Kafka → Silver (with deduplication), then Silver → the eight Gold marts. A Gold hour is written only after the 10-minute watermark passes it, so the newest hour or two appear later, and a short run does not write the last window. `python spark/stream_job.py --stage silver` (or `gold`) runs one stage on its own.
+**Look inside Kafka:**
 
-The first build downloads the Spark image layers and the Kafka connector jars, so it takes several minutes and needs internet access.
+```bash
+~/kafka/bin/kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic taxi.green.raw
+~/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic taxi.yellow.raw \
+  --from-beginning --max-messages 5 --property print.key=true --property print.headers=true
+```
 
-## 6. View the results
+**Check the stream:**
 
-Results are Parquet files on the host, in `output/`:
+```bash
+python scripts/reconcile.py                # every message sent is in exactly one output: OK or MISMATCH
+python scripts/show_results.py             # summaries; add --sql "SELECT ..." for your own query
+python scripts/evaluate_stream.py          # latency and throughput against evaluation.md
+```
+
+**Compare with the batch for the streamed month.** Run the producers with `QUALITY_PROFILE=clean` and the same `MAX_RECORDS` first:
+
+```bash
+python spark/batch_job.py --months 2026-01 --output-dir output/check --max-records yellow=1000 green=1000 fhv=1000 hvfhv=1000
+python scripts/compare_stream_batch.py --stream output/stream/gold --batch output/check/gold
+rm -rf output/check
+```
+
+**Start fresh.** Reset Kafka and Spark's checkpoints together, otherwise the checkpoint won't match the new topics:
+
+```bash
+~/kafka/bin/kafka-server-stop.sh && rm -rf ~/kafka-data
+cd ~/kafka && bin/kafka-storage.sh format -t "$(bin/kafka-storage.sh random-uuid)" -c config/kraft/server.properties && cd -
+rm -rf output/stream output/checkpoints output/producer-stats
+```
+
+Then start Kafka and create the topics again.
+
+## 8. Where the results are
 
 | Path | Contents |
 |---|---|
-| `output/stream/silver/trips/service_type=<name>/` | Silver trips: one schema for all four services, with `dq_*` flags (`specs/silver-schema.md`) |
-| `output/stream/silver_invalid/service_type=<name>/` | Unusable rows (`malformed_json`, `null_pickup_time`) with the raw message |
-| `output/stream/silver/dim_*/` | Zone, payment type, rate code and HVFHV company lookups |
-| `output/stream/gold/<mart>/` | The eight daily marts, hourly rows with additive measures (`specs/gold-schema.md`) |
+| `output/batch/silver/trips/` | Silver trips, one schema for all four services, with `dq_*` flags (`specs/silver-schema.md`) |
+| `output/batch/silver_invalid/` | Unusable rows with the reason |
+| `output/batch/silver/dim_*/`, `batch_run_log/` | Lookups, and one row per file load |
+| `output/batch/gold/<mart>/` | Daily, monthly and health marts (`specs/gold-schema.md`), ML results (`ml_*`) |
+| `output/stream/...` | The same layout for the stream path |
 | `output/producer-stats/*.json` | What each producer sent, including injected-fault counts |
-| `output/checkpoints/` | Spark progress (do not delete while the job is running) |
+| `output/checkpoints/` | Spark stream progress (don't delete while the job runs) |
 
-**Reconcile: every message sent must be in exactly one output**
+## 9. Tests
 
-```powershell
-python scripts/reconcile.py
+```bash
+python -m pytest tests -q                                   # ~16 minutes on a 2 core machine (Spark tests start a local Spark)
+python -m pytest tests -q -k "not spark and not real_data"  # fast subset, a few seconds
 ```
 
-Prints sent / silver / invalid / removed per service, the number of duplicates the producer injected, the reject reasons, how many Silver rows carry each `dq_*` flag, and `OK` or `MISMATCH` (exit code 1). Removed = sent - silver - invalid; it must cover every injected duplicate that was not rejected, and can be higher because trips identical in every field (mostly FHV) collapse too.
+Two tests depend on the machine, not the code:
+- `test_zone_hour_lags_and_grid`: run with `TZ=UTC` if the machine isn't on UTC.
+- `test_kpi_queries_answer_on_duckdb_and_spark_sql`: expects the 24-month batch range (`start_month: 2024-01`).
 
-**Summaries with DuckDB**
-
-```powershell
-python scripts/show_results.py
-```
-
-Prints trips per service, top pickup zones, rejected rows by reason, the flagged rows, and Gold results (trips per day, average fare and card tip rate, HVFHV driver pay share). Run your own query against the tables `silver`, `invalid` and each mart (`trips_daily`, `revenue_daily`, ...). Gold holds sums, so compute ratios in the query:
-
-```powershell
-python scripts/show_results.py --sql "SELECT pickup_date, sum(sum_total_amount) / sum(trips) AS avg_fare FROM revenue_daily GROUP BY ALL ORDER BY 1"
-```
-
-Add `--output-dir <path>` for output somewhere other than `output/`.
-
-**Evaluate the stream against the proposed targets (`evaluation.md`)**
-
-```powershell
-python scripts/evaluate_stream.py
-```
-
-Prints latency (S1) and throughput (S3) from the Silver timestamps. Only meaningful for a run from Kafka: the file source stamps rows with the processing time, so latency reads 0 s there.
-
-## 7. Try it without Docker (verified on the dev machine)
-
-Needs Java 8, 11 or 17 and `pip install -r requirements-dev.txt`. This replays the real data into files instead of Kafka and runs the same Spark code.
-
-```powershell
-# Keep this path short: Windows' 260-character limit breaks reads in deep folders
-$run = "$env:TEMP\m3run"; New-Item -ItemType Directory -Force "$run\in","$run\out" | Out-Null
-
-# 1. Producers in dry-run mode: write NDJSON instead of sending to Kafka
-$env:DATA_DIR="data"; $env:REPLAY_SPEEDUP="0"; $env:MAX_RECORDS="500"; $env:QUALITY_PROFILE="messy"
-$env:STATS_DIR="$run\out\producer-stats"
-foreach ($d in "yellow","green","fhv","hvfhv") { python producer\producer.py --dataset $d --dry-run --out "$run\in\$d.ndjson" }
-
-# 2. Spark streaming job on those files (a machine-wide SPARK_HOME would clash: point it at pip's pyspark)
-$env:SPARK_HOME = (python -c "import os,pyspark;print(os.path.dirname(pyspark.__file__))")
-$env:PYSPARK_PYTHON = (Get-Command python).Source
-$env:OUTPUT_DIR="$run\out\stream"; $env:CHECKPOINT_DIR="$run\out\checkpoints"; $env:ZONE_LOOKUP="data\taxi_zones\taxi_zone_lookup.csv"
-python spark\stream_job.py --source files --input-dir "$run\in"
-
-# 3. Check the result
-python scripts\reconcile.py --output-dir "$run\out"
-python scripts\show_results.py --output-dir "$run\out"
-```
-
-HVFHV takes about 12 seconds to start because it sorts 20.9 million timestamps. Unset the variables afterwards with `Remove-Item Env:DATA_DIR,Env:REPLAY_SPEEDUP,Env:MAX_RECORDS,Env:QUALITY_PROFILE,Env:STATS_DIR,Env:SPARK_HOME,Env:PYSPARK_PYTHON,Env:OUTPUT_DIR,Env:CHECKPOINT_DIR,Env:ZONE_LOOKUP`.
-
-## 8. Batch processing of historic data (M5)
-
-The batch path needs no Kafka. It reads the monthly TLC files in `data/` and writes Silver and Gold under `output/batch/`.
-
-```powershell
-# 1. Download the configured range (batch.start_month to batch.end_month in config.yaml; now 2025-10 to 2025-12,
-#    about 1.7 GB. The plan default is 2024-01 to 2025-12, about 14 GB, mostly HVFHV). Change the two values to widen it.
-python scripts/download_data.py --batch
-python scripts/download_data.py --months 2025-12 --datasets yellow green fhv     # or just a few months
-
-# 2a. In Docker (the whole configured range, or one month)
-docker compose --profile batch up --build spark-batch
-docker compose --profile batch run --rm spark-batch python batch_job.py --months 2025-12
-
-# 2b. Or on the host (needs Java 8, 11 or 17 and pip install -r requirements-dev.txt; see Section 7 for SPARK_HOME)
-$env:ZONE_LOOKUP="data\taxi_zones\taxi_zone_lookup.csv"
-python spark\batch_job.py --months 2024-12 2025-12 --datasets yellow green fhv --input-dir data --output-dir output\batch
-```
-
-A run takes about 1 minute per small file on a 2-core machine; a month of HVFHV (about 21 million trips) takes much longer. Rerunning a month replaces only that month's partitions and adds a row to `silver/batch_run_log`. A missing file is logged as failed and the run continues; the exit code is 1 if any file failed.
-
-**Check and query**
-
-```powershell
-python scripts/reconcile.py --batch                 # source rows = silver + invalid + duplicates, per file (diff should be 0)
-python scripts/combined_views.py                    # writes output/combined.duckdb: batch tables, and combined_<mart> views
-duckdb output/combined.duckdb                       # then paste a file from scripts/queries/*.sql (replace {cutover})
-python scripts/benchmark_queries.py                 # every KPI query on DuckDB and Spark SQL, plus pruning vs full scan
-python scripts/benchmark_queries.py --no-spark      # DuckDB only (faster)
-```
-
-The KPI queries are in `scripts/queries/`: `trips_growth` (month-over-month, year-over-year, rolling 12 months, seasonality), `service_share_shift`, `revenue_trends`, `fee_impact`, `efficiency_trends`, `peak_hour_shift`, `zone_growth`, `driver_pay_trend`, `batch_health`, `data_quality_drift`, and `live_vs_baseline` (streamed hours against the batch history; needs the stream output too). A value that needs months that are not loaded is NULL, and the status column says "not enough history". With 2024-01 to 2025-12 loaded, the Airport fee comparison (before 2022) is reported that way.
-
-**Compare the stream with the batch for the streamed month** (the batch run goes to a throwaway folder, never into `output/batch`):
-
-```powershell
-python spark\batch_job.py --months 2026-01 --input-dir data --output-dir output\check --max-records yellow=20000 green=20000 fhv=20000 hvfhv=20000
-python scripts/compare_stream_batch.py --stream output/stream/gold --batch output/check/gold
-Remove-Item -Recurse -Force output\check
-```
-
-Run the producers with `QUALITY_PROFILE=clean` and the same `MAX_RECORDS` first. Every stream row (only closed hours exist) must equal the batch row with the same keys. With faults injected, or trips dropped as too late by the watermark, the two differ on purpose.
-
-## 9. Spark ML on the historic data (M6)
-
-The ML job needs no Kafka. It reads the batch store from Section 8 (`output/batch/silver/trips` and the gold marts) and writes `output/batch/silver/ml_features` and `output/batch/gold/ml_*`. Run the batch job first, for at least two months so the lag features (168 hours back) and the month-to-month checks have data.
-
-```powershell
-# In Docker
-docker compose --profile ml up --build spark-ml
-
-# Or on the host (same setup as Section 8; SPARK_HOME must point at pip's pyspark)
-python spark\ml_job.py --batch-dir output\batch
-python spark\ml_job.py --batch-dir output\batch --models fare anomaly     # a subset (anomaly needs fare)
-python scripts\evaluate_models.py --batch-dir output\batch              # the latest run against evaluation.md
-```
-
-Settings are in the `ml:` section of `config.yaml`: `sample_rows` (trips per service for the trip-level models, 300,000 by default; 5,000,000 on a big machine), `test_percent`, `cv_folds` (0 skips cross-validation), the tree settings, the cluster counts, the anomaly settings and the holiday list. The same `seed` gives the same metrics. On the 2-core dev machine two months with the defaults take about 25 minutes. `ml_model_metrics` is appended to on every run, so the training time can be followed as the data grows.
-
-## 10. Dashboard
-
-A Streamlit app over the Gold marts and the ML results. It reads the Parquet files in place through DuckDB, so it needs no Docker and no extra service, and it shows whatever exists: a page without data says what to run.
-
-```powershell
-pip install -r requirements-dev.txt                    # streamlit and pandas are included
-streamlit run dashboard/app.py                         # opens http://localhost:8501
-streamlit run dashboard/app.py --server.address localhost    # keep it off the network
-$env:DASHBOARD_OUTPUT="output\ml_dev"; streamlit run dashboard/app.py   # another output folder (it must contain batch\)
-```
-
-The sidebar sets the output folder and the cutover date, and has a **Reload data** button (use it after a new batch, stream or ML run). Pages: Trends, Revenue, Efficiency, Zones, HVFHV, Quality and health (the slowest file loads are listed first), Live vs baseline (needs the stream output and a batch range that ends before the cutover), and ML models (targets, lift, error by month, predicted against actual, clusters, flagged trips).
-
-## 11. Tests, stop and reset
-
-```powershell
-python -m pytest tests -q              # 98 tests, ~16 minutes on a 2-core machine (the Spark tests start a local Spark)
-python -m pytest tests -q -k "not spark and not real_data"    # fast subset (a few seconds)
-
-docker compose stop                    # stop everything, keep data
-docker compose down                    # remove containers, keep Kafka data (volume)
-docker compose down -v                 # also delete Kafka data
-```
-
-**Start completely fresh** (Kafka data and Spark progress must be reset together, otherwise Spark's checkpoint will not match the new topics):
-
-```powershell
-docker compose --profile ui --profile producers --profile spark down -v
-Remove-Item -Recurse -Force output
-```
-
-## 12. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `kafka` never becomes healthy | Not enough memory for Docker. Give WSL at least 6 GB (8 GB recommended) in `%UserProfile%\.wslconfig`, then `wsl --shutdown`. |
-| `kafka-init` exits with an error | `docker compose logs kafka-init`. The listener settings and the `confluent-kafka` admin calls were not run yet. |
-| Producer: "input file(s) missing" | Run `python scripts/download_data.py`. |
-| Producer waits for Kafka then gives up | `docker compose ps` shows whether `kafka-init` finished. Topics must exist before producers start. |
-| Producer is slow | `REPLAY_SPEEDUP` is paced on purpose. Use `$env:REPLAY_SPEEDUP="0"` for full speed. HVFHV also takes a while to sort at start-up. |
-| `spark-job` build fails on `curl` | The Maven Central download needs internet. Check proxy and firewall. |
-| `batch_job.py`: a file is `failed` with `not found` | The month is not in `data/`. Run `python scripts/download_data.py --months <month>`. |
-| `reconcile.py`: MISMATCH | Spark has not finished, or Kafka was reused with an old checkpoint. Wait for `available_now` to exit, or reset (Section 11). |
-| Spark tests fail with `legacyInferArrayTypeFromFirstElement` | A machine-wide `SPARK_HOME` overrides PySpark. See `installation.md`. |
-| `FileNotFoundError` on a file that exists | Windows path longer than 260 characters. Use a shorter folder. |
-| Docker Desktop will not start on an Azure VM | B-series sizes cannot run nested virtualization. See `installation.md`. |
-
-## 13. Not built yet
-
-- The single-command `docker compose up --build` for the whole pipeline (M7) and the restart test (M8). Until M7, start the services in the order above.
-- Sections 5 to 7 describe the M4 stream (Silver and Gold), Section 8 the M5 batch path and Section 9 the M6 models and Section 10 the dashboard. The Kafka path in Sections 2 to 5 and the Docker services in Sections 8 and 9 are written but not run on a machine with Docker yet; the host commands (Sections 7 to 9) are verified.
+| `batch_job.py`: a file is `failed` with `not found` | The month isn't in `data/`: `python scripts/download_data.py --months <month>` |
+| `PATH_NOT_FOUND ... taxi_zone_lookup.csv` | Download it: `python scripts/download_data.py --zones --months <any month>` |
+| `Path does not exist` for `data/` or `output/` | Run commands from the project root (the config paths are relative) |
+| Py4J errors such as `legacyInferArrayTypeFromFirstElement does not exist` | A machine-wide `SPARK_HOME` points at another Spark version. Unset it for local runs, or point it at pip's pyspark: `export SPARK_HOME=$(python -c "import os,pyspark;print(os.path.dirname(pyspark.__file__))")` |
+| `JAVA_HOME is not set` / `Java gateway process exited` | Install Java 17 and put it on PATH |
+| `No module named 'distutils'` in the ML job | `pip install setuptools==80.9.0` (Python 3.12 removed distutils) |
+| Out of memory | Lower `driver_memory` in `config.yaml`, load fewer months, or leave out HVFHV |
+| `reconcile.py`: MISMATCH | Spark hasn't finished, or Kafka was reused with an old checkpoint: reset (section 7) |
+| Producer: "input file(s) missing" | Download the streamed month (section 6) |
+| Producer waits for Kafka then gives up | Kafka isn't running, or the topics don't exist yet: `python scripts/create_topics.py` |
+| Stream job: `Failed to find data source: kafka` | Set `SPARK_PACKAGES=org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3` |
+| `FileNotFoundError` for a file that exists (Windows) | A path longer than 260 characters: use a shorter folder |

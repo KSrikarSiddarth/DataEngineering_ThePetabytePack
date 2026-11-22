@@ -1,6 +1,6 @@
 """M4 test: the whole streaming job (Silver -> deduplication -> Gold) run end to end on NDJSON input files.
 
-Kafka is replaced by the job's `--source files` dev source, so this needs Spark and Java but no Docker.
+Kafka is replaced by the job's `--source files` dev source, so this needs Spark and Java.
 """
 import json
 import shutil

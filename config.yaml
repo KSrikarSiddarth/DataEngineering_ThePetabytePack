@@ -1,14 +1,15 @@
 # config.yaml — single source of truth for how taxi data is streamed.
 #
 # Who reads what:
-#   kafka, topics   -> M1  kafka-init (creates the topics)
+#   kafka, topics   -> M1  scripts/create_topics.py (creates the topics)
 #   streaming       -> M2  producer (volume, pacing, delivery)
 #   data_quality    -> M2  producer (fault injection) and M3 Spark (validation counters)
 #   processing      -> M3/M4 Spark job (watermark, windows, trigger)
 #
 # Column names below come from the TLC data dictionaries as recalled and MUST be
 # verified against the real parquet files in M2 (see PLAN.md section 6.1).
-# Environment variables (.env) may override a few values; see README/PLAN.md.
+# Paths are relative to the project root: run every command from there.
+# Environment variables override a few values (see run.md).
 
 version: 1
 
@@ -16,8 +17,7 @@ version: 1
 # Kafka connection and topics (consumed by M1)
 # ---------------------------------------------------------------------------
 kafka:
-  bootstrap_servers_internal: kafka:29092   # for containers on the compose network
-  bootstrap_servers_host: localhost:9092    # for tools running on the host
+  bootstrap_servers: localhost:9092         # KAFKA_BOOTSTRAP overrides it, e.g. <VM IP>:9092 on a cluster
 
 topic_defaults:
   partitions: 3
@@ -45,7 +45,7 @@ topics:
 # Streaming volume and pacing (consumed by M2)
 # ---------------------------------------------------------------------------
 streaming:
-  input_dir: /data                          # mounted read-only in the producer
+  input_dir: data                           # the downloaded monthly files
   months: ["2026-01"]                       # which monthly files to replay, in order
   seed: 42                                  # makes sampling and fault injection repeatable
 
@@ -160,14 +160,14 @@ processing:
   dedup_watermark_minutes: 2                # Silver: how long (ingest time) a trip_id is remembered for deduplication
   shuffle_partitions: 8
   spark_master: local[2]                    # cores: local[N], local[*] = all, or spark://<PC-IP>:7077 (cluster)
-  driver_memory: 2g                         # keep within what WSL gets (.wslconfig)
+  driver_memory: 2g                         # keep within the machine's free RAM
   validation:
     expected_month: "2026-01"
     date_tolerance_days: 1                  # accepted slack around the expected month
     max_trip_hours: 24
-  zone_lookup: /data/taxi_zones/taxi_zone_lookup.csv
-  output_dir: /output/stream                # Silver in silver/, Gold in gold/ (M5's batch store is /output/batch)
-  checkpoint_dir: /output/checkpoints
+  zone_lookup: data/taxi_zones/taxi_zone_lookup.csv
+  output_dir: output/stream                 # Silver in silver/, Gold in gold/ (M5's batch store is output/batch)
+  checkpoint_dir: output/checkpoints
 
 # ---------------------------------------------------------------------------
 # Batch processing of historic data (consumed by M5: spark/batch_job.py, scripts/download_data.py --batch)
@@ -177,17 +177,17 @@ batch:
   start_month: "2025-10"                    # 3 months for development; the plan default is "2024-01" (24 months, D25)
   end_month: "2025-12"
   datasets: [yellow, green, fhv, hvfhv]
-  input_dir: /data                          # the downloaded monthly files (data/ on the host)
-  output_dir: /output/batch                 # silver/, silver_invalid/, gold/ (the stream writes /output/stream)
+  input_dir: data                           # the downloaded monthly files
+  output_dir: output/batch                  # silver/, silver_invalid/, gold/ (the stream writes output/stream)
   shuffle_partitions: 16
   spark_master: local[2]                    # cores: local[N], local[*] = all, or spark://<PC-IP>:7077 (cluster)
-  driver_memory: 4g                         # keep within what WSL gets (.wslconfig)
+  driver_memory: 4g                         # keep within the machine's free RAM
 
 # ---------------------------------------------------------------------------
 # Spark ML on the batch store (consumed by M6: spark/ml_job.py). The same seed gives the same metrics.
 # ---------------------------------------------------------------------------
 ml:
-  batch_dir: /output/batch                  # reads silver/trips and gold/*; writes silver/ml_features and gold/ml_*
+  batch_dir: output/batch                   # reads silver/trips and gold/*; writes silver/ml_features and gold/ml_*
   seed: 42
   sample_rows: 300000                       # trip-level models: at most this many clean trips per service (5000000 on a big machine)
   test_percent: 20                          # share of rows held out for scoring (chosen by a hash of the row key)
@@ -203,7 +203,7 @@ ml:
   anomaly_inject_percent: 5                 # share of holdout trips corrupted to measure recall and precision
   shuffle_partitions: 16
   spark_master: local[2]                    # cores: local[N], local[*] = all, or spark://<PC-IP>:7077 (cluster)
-  driver_memory: 4g                         # keep within what WSL gets (.wslconfig)
+  driver_memory: 4g                         # keep within the machine's free RAM
   holidays: [                               # US federal holidays; the TLC files carry none. Extend for other years.
     "2024-01-01", "2024-01-15", "2024-02-19", "2024-05-27", "2024-06-19", "2024-07-04", "2024-09-02", "2024-10-14",
     "2024-11-11", "2024-11-28", "2024-12-25",

@@ -10,7 +10,7 @@ Four sections, each skipped with a note when its data does not exist yet:
   1. Batch processing: pipeline health (scripts/queries/batch_health.sql) and every file load's time and throughput.
   2. Streaming targets S1 (latency) and S3 (throughput), measured from the stream Silver Parquet.
   3. Model targets M1-M10 and O1/O3 from the latest Spark ML run (same checks as scripts/evaluate_models.py).
-Targets that need Spark's progress log, `docker stats` or a restart test (S2, S4-S7, O2, O4) are listed as not measured.
+Targets that need Spark's progress log, memory sampling or a restart test (S2, S4-S7, O2, O4) are listed as not measured.
 """
 import argparse
 from datetime import datetime

@@ -10,18 +10,16 @@ replaces only its own rows). `year` and `month` are those of the source file, be
 rows with pickup times outside its month (flagged by dq_pickup_out_of_range). Each file load adds one row to
 silver/batch_run_log, and the health marts are computed from that log.
 
-Output under <output_dir> (default /output/batch): silver/trips, silver/dim_*, silver/batch_run_log,
+Output under <output_dir> (default output/batch): silver/trips, silver/dim_*, silver/batch_run_log,
 silver_invalid, gold/<daily, monthly and health marts>. Needs no Kafka.
 """
 import argparse
 import hashlib
 import json
 import os
-import shutil
 import sys
 import uuid
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 import pyspark.sql.functions as F
 from pyspark.sql import Window
@@ -29,6 +27,7 @@ from pyspark.sql import types as T
 
 from dims import write_dims
 from gold import MARTS, MONTHLY, rollup_monthly
+from storage import delete, exists, join, read_text, write_text
 from stream_job import build_spark, load_config, load_zones
 from transform import conform, read_typed, service_type, split_rows
 
@@ -54,28 +53,28 @@ def month_range(start, end):
 
 def partition_path(base, **parts):
     """Folder of one Hive-style partition, e.g. base/service_type=yellow/year=2026/month=1."""
-    return Path(base, *[f"{k}={v}" for k, v in parts.items()])
+    return join(base, *[f"{k}={v}" for k, v in parts.items()])
 
 
 def write_partitions(df, base, **parts):
     """Replace the partition `parts` of the Parquet table `base` with `df` (idempotent per partition)."""
-    shutil.rmtree(partition_path(base, **parts), ignore_errors=True)
+    delete(df.sparkSession, partition_path(base, **parts))
     for name, value in parts.items():
         df = df.withColumn(name, F.lit(value))
-    df.write.mode("append").partitionBy(*parts).parquet(str(base))
+    df.write.mode("append").partitionBy(*parts).parquet(base)
 
 
 def count_rows(spark, path):
     """Rows in a written partition (0 when nothing was written), read back from the Parquet files."""
-    return spark.read.parquet(str(path)).count() if Path(path).exists() else 0
+    return spark.read.parquet(path).count() if exists(spark, path) else 0
 
 
 def late_corrections(spark, old_dir, new_df):
     """Rows of the previous load of this partition whose trip_id is missing from the new load: TLC corrected
     or removed them. 0 on a first load."""
-    if not Path(old_dir).exists():
+    if not exists(spark, old_dir):
         return 0
-    old = spark.read.parquet(str(old_dir)).select("trip_id")
+    old = spark.read.parquet(old_dir).select("trip_id")
     return old.join(new_df.select("trip_id"), "trip_id", "left_anti").count()
 
 
@@ -88,10 +87,10 @@ def load_file(spark, ctx, name, month):
            "source_month": month, "tlc_published_date": ctx["published"].get(fname),
            "start_ts": datetime.now(timezone.utc), "status": "failed"}
     try:
-        path = Path(ctx["input_dir"]) / fname
-        if not path.exists():
+        path = join(ctx["input_dir"], fname)
+        if not exists(spark, path):
             raise FileNotFoundError(f"{path} not found")
-        raw = spark.read.parquet(str(path))
+        raw = spark.read.parquet(path)
         cap = ctx["max_records"].get(name)
         if cap:   # check runs: the first `cap` trips by pickup time, ties in file order, like the producer's MAX_RECORDS
             raw = (raw.withColumn("_row", F.monotonically_increasing_id()).orderBy(spec["pickup_col"], "_row")
@@ -132,8 +131,7 @@ def write_run_info(spark, out):
             "driver_memory": spark.conf.get("spark.driver.memory"),
             "shuffle_partitions": int(spark.conf.get("spark.sql.shuffle.partitions")),
             "host_logical_cores": os.cpu_count(), "host_ram_gb": ram_gb}
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "run_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
+    write_text(spark, join(out, "run_info.json"), json.dumps(info, indent=2))
     print(f"spark master {info['spark_master']}, {info['cores_used']} cores used, driver memory "
           f"{info['driver_memory']}, host {info['host_logical_cores']} cores / {ram_gb} GB RAM", flush=True)
 
@@ -143,29 +141,29 @@ def build_gold(spark, ctx, month, log_rows):
     marts. data_quality_monthly also carries the month's load counts (duplicates, late corrections)."""
     year, mon = int(month[:4]), int(month[5:])
     month_only = (F.col("year") == year) & (F.col("month") == mon)
-    silver = spark.read.parquet(str(ctx["trips"])).where(month_only)
+    silver = spark.read.parquet(ctx["trips"]).where(month_only)
     for name, build in MARTS.items():
-        write_partitions(build(silver), ctx["gold"] / name, year=year, month=mon)
+        write_partitions(build(silver), join(ctx["gold"], name), year=year, month=mon)
 
     loads = spark.createDataFrame(
         [(r["service_type"], r["bronze_rows"], r["invalid_rows"], r["duplicates_removed"], r["late_correction_rows"])
          for r in log_rows if r["status"] == "success"],
         "service_type string, bronze_rows long, invalid_rows long, duplicates_removed long, late_correction_rows long")
     for name, (daily, keys) in MONTHLY.items():
-        daily_dir = partition_path(ctx["gold"] / daily, year=year, month=mon)
-        if not daily_dir.exists():   # the daily mart has no rows this month (e.g. no yellow or green file loaded)
-            shutil.rmtree(partition_path(ctx["gold"] / name, year=year, month=mon), ignore_errors=True)
+        daily_dir = partition_path(join(ctx["gold"], daily), year=year, month=mon)
+        if not exists(spark, daily_dir):   # the daily mart has no rows this month (e.g. no yellow or green file loaded)
+            delete(spark, partition_path(join(ctx["gold"], name), year=year, month=mon))
             continue
-        out = rollup_monthly(spark.read.parquet(str(daily_dir)), keys, year, mon)
+        out = rollup_monthly(spark.read.parquet(daily_dir), keys, year, mon)
         if name == "data_quality_monthly":
             out = out.join(loads, "service_type", "left")
-        write_partitions(out, ctx["gold"] / name, year=year, month=mon)
+        write_partitions(out, join(ctx["gold"], name), year=year, month=mon)
 
 
 def build_health(spark, ctx, months_expected):
     """gold.batch_run_metrics from silver.batch_run_log: success, freshness, reconciliation (should be 0),
     schema drift against the dataset's previous file, runtime and throughput, and the backfill target."""
-    log = spark.read.parquet(str(ctx["silver"] / "batch_run_log"))
+    log = spark.read.parquet(join(ctx["silver"], "batch_run_log"))
     prev = F.split(F.lag("columns").over(Window.partitionBy("dataset").orderBy("source_month", "start_ts")), ",")
     cur = F.split("columns", ",")
     runtime = F.col("end_ts").cast("double") - F.col("start_ts").cast("double")
@@ -179,15 +177,13 @@ def build_health(spark, ctx, months_expected):
         F.when(prev.isNotNull(), F.size(F.array_except(prev, cur))).otherwise(0).alias("columns_removed"),
         runtime.alias("runtime_sec"), (F.col("bronze_rows") / runtime).alias("rows_per_sec"),
         F.lit(months_expected).alias("months_expected"))
-    metrics.write.mode("overwrite").parquet(str(ctx["gold"] / "batch_run_metrics"))
+    metrics.write.mode("overwrite").parquet(join(ctx["gold"], "batch_run_metrics"))
 
 
-def published_dates(input_dir):
+def published_dates(spark, input_dir):
     """File name -> TLC publication date, from the file the download script writes (empty if there is none)."""
-    path = Path(input_dir) / "tlc_published.json"
-    if not path.exists():
-        return {}
-    return {k: date.fromisoformat(v) for k, v in json.loads(path.read_text(encoding="utf-8")).items()}
+    text = read_text(spark, join(input_dir, "tlc_published.json"))
+    return {k: date.fromisoformat(v) for k, v in json.loads(text).items()} if text else {}
 
 
 def main(argv=None):
@@ -204,19 +200,20 @@ def main(argv=None):
     conf = load_config()
     cfg = conf["batch"]
     input_dir = args.input_dir or cfg["input_dir"]
-    out = Path(args.output_dir or cfg["output_dir"])
+    out = args.output_dir or cfg["output_dir"]
     expected = list(month_range(cfg["start_month"], cfg["end_month"]))
     spark = build_spark(cfg)
     spark.sparkContext.setLogLevel("WARN")
     write_run_info(spark, out)
     ctx = {"specs": conf["specs"], "norms": conf["norms"], "vcfg": conf["proc"]["validation"],
            "zones": load_zones(spark, conf["zone_lookup"]), "input_dir": input_dir,
-           "silver": out / "silver", "trips": out / "silver" / "trips", "invalid": out / "silver_invalid", "gold": out / "gold",
+           "silver": join(out, "silver"), "trips": join(out, "silver", "trips"), "invalid": join(out, "silver_invalid"),
+           "gold": join(out, "gold"),
            "max_records": {k: int(v) for k, v in (a.split("=") for a in args.max_records)},
-           "published": published_dates(input_dir), "run_id": uuid.uuid4().hex[:12]}
+           "published": published_dates(spark, input_dir), "run_id": uuid.uuid4().hex[:12]}
     datasets = [d for d in (args.datasets or cfg["datasets"]) if d in conf["specs"]]
 
-    write_dims(spark, ctx["zones"], str(ctx["silver"]))
+    write_dims(spark, ctx["zones"], ctx["silver"])
     failed = 0
     months = args.months or expected
     for i, month in enumerate(months, 1):
@@ -236,7 +233,7 @@ def main(argv=None):
                     if r["status"] == "success":
                         r.update(status="failed", error=f"gold: {exc}"[:500])
         spark.createDataFrame([tuple(r.get(f.name) for f in LOG_SCHEMA) for r in rows], LOG_SCHEMA) \
-            .write.mode("append").parquet(str(ctx["silver"] / "batch_run_log"))
+            .write.mode("append").parquet(join(ctx["silver"], "batch_run_log"))
         for r in rows:
             failed += r["status"] != "success"
             secs = (r["end_ts"] - r["start_ts"]).total_seconds()

@@ -1,5 +1,5 @@
 # Host-side tools: download script, producer dry-run, and the test suite.
-# (The producer and Spark job have their own requirements.txt for their containers.)
+# The Kafka path also needs producer/requirements.txt (confluent-kafka); a Spark-only machine needs spark/requirements.txt.
 pyarrow==25.0.1
 numpy==2.2.6
 PyYAML==6.0.3
@@ -7,3 +7,4 @@ pytest==8.3.4
 pyspark==3.5.3        # Spark tests need Java 8, 11 or 17 on PATH
 duckdb==1.5.6         # scripts/show_results.py
 streamlit==1.40.2     # dashboard/app.py (M7); brings pandas
+setuptools==80.9.0    # pyspark.ml imports distutils, which Python 3.12 removed; setuptools provides it

@@ -5,7 +5,7 @@
 Measures from the Silver Parquet only: S1 (latency = silver_write_ts - kafka_timestamp, per row) and
 S3 (sustained throughput = Silver rows / seconds between the first and last write). The other targets
 (S2 micro-batch duration, S4 Gold freshness, S5 restart, S7 memory) need Spark's progress log, the M8
-restart test or `docker stats`, so they are listed as not measured here. Exit code 1 if a target is missed.
+restart test or memory sampling, so they are listed as not measured here. Exit code 1 if a target is missed.
 """
 import argparse
 import sys

@@ -33,11 +33,6 @@ def _load_yaml(path):
         return yaml.safe_load(fh)
 
 
-def default_config_path():
-    in_container = Path("/config/config.yaml")
-    return in_container if in_container.exists() else HERE.parent / "config.yaml"
-
-
 @dataclass
 class Settings:
     dataset: str
@@ -79,7 +74,7 @@ def load_settings(dataset=None, env=None):
     if not dataset:
         raise ValueError("no dataset given (use --dataset or DATASET)")
 
-    cfg = _load_yaml(_env(env, "CONFIG_PATH") or default_config_path())
+    cfg = _load_yaml(_env(env, "CONFIG_PATH") or HERE.parent / "config.yaml")
     specs = _load_yaml(_env(env, "DATASETS_PATH") or HERE / "datasets.yaml")["datasets"]
     if dataset not in specs:
         raise ValueError(f"unknown dataset {dataset!r}; choose from {sorted(specs)}")
@@ -103,7 +98,7 @@ def load_settings(dataset=None, env=None):
         dataset=dataset,
         spec=spec,
         topic=spec["topic"],
-        bootstrap=_env(env, "KAFKA_BOOTSTRAP") or cfg["kafka"]["bootstrap_servers_internal"],
+        bootstrap=_env(env, "KAFKA_BOOTSTRAP") or cfg["kafka"]["bootstrap_servers"],
         data_dir=Path(_env(env, "DATA_DIR") or streaming["input_dir"]),
         months=months,
         speedup=float(_env(env, "REPLAY_SPEEDUP") or pacing["replay_speedup"]),

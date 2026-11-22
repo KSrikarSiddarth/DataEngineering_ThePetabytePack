@@ -1,132 +1,69 @@
-# installation.md — Software Setup
+# installation.md: software setup
 
-What to install on a Windows 11 PC, and which step of the project (see `PLAN.md` and `Steps.md`) needs it. Install only what you need for the step you're about to start.
+Everything installs directly on the machine. There is no Docker and no WSL.
 
-## 1. Summary
-
-| Software | Needed for | Required? | Install |
-|---|---|---|---|
-| Virtualization (BIOS) | Docker Desktop / WSL 2 | Yes | Enable VT-x / AMD-V in BIOS |
-| WSL 2 | M1 onward (Docker backend) | Yes | `wsl --install` |
-| Docker Desktop (with Compose v2) | M1 onward | Yes | `winget install -e --id Docker.DockerDesktop` |
-| Git | Chapter 0 (version control), all later steps | Yes | `winget install --id Git.Git -e` |
-| Python 3.10+ | M2 (data download, schema inspection), tests | Yes | `winget install -e --id Python.Python.3.12` |
-| VS Code | Editing, all steps | Already installed | — |
-| Docker extension for VS Code | Viewing containers | Optional | VS Code Extensions: "Docker" |
-| Java / Spark / Kafka on the host | Nothing | **No** | They run inside containers |
-
-## 2. Step-by-step: what each step needs
-
-| Step | Needs | Notes |
+| Software | Needed for | Required? |
 |---|---|---|
-| Chapter 0 — Setup | Git, VS Code | `git init`, set `user.name` and `user.email` |
-| M1 — Kafka up | WSL 2, Docker Desktop, internet | First run pulls the Kafka image |
-| M2 — Producer | Python (host), Docker Desktop | Python is used to download the Green, FHV, and HVFHV files, inspect the parquet schemas, and run schema tests. The producer itself runs in a container. |
-| M3 — Spark parse/validate/enrich | Docker Desktop, internet | The Spark image and Kafka connector jar are downloaded at build time |
-| M4 — Silver conformance and stream Gold | Docker Desktop, Python with DuckDB (to spot-check) | Reworks the M3 output to the Silver schema and builds the daily Gold marts |
-| M5 — Batch processing of historic data | Docker Desktop (for the container run), or Python + Java 8/11/17 on the host; DuckDB; about 80 GB free disk for 24 months (about 22 GB for 3 months; see `storage_requirements.md`) | Downloads 24 months (2024-01 to 2025-12) of the four datasets (~13–14 GB raw, most of it HVFHV), in addition to the streamed month. Needs no Kafka. Python with `duckdb` runs the query benchmark. |
-| M6 — Spark ML | Docker Desktop (or Python + Java on the host) | Spark MLlib is part of PySpark, so nothing new to install. Training needs several GB of RAM; see `storage_requirements.md` for disk. |
-| M7 — End-to-end Compose | Docker Desktop, PowerShell | Runs `tests/smoke_test.ps1` |
-| M8 — Hardening and docs | Docker Desktop | Restart/recovery test |
-| Reading the output (any time after M3) | Python with pandas/pyarrow, or DuckDB | Optional; for inspecting Parquet files |
+| Python 3.12 | Everything (download, Spark jobs through PySpark, analysis, dashboard, tests) | Yes |
+| Java 17 | Spark (batch, stream, ML, Spark tests) | Yes |
+| Kafka 3.9 | The live stream only (`run.md` section 7), on Linux | Optional |
+| Git | Version control | Optional |
 
-## 3. Installation instructions
+Spark comes with `pip install pyspark`, so a separate Spark download is only needed for a standalone cluster
+(`Run_SetupE.md`, `../SetupF.md`).
 
-### 3.1 Enable virtualization
-Check Task Manager → Performance → CPU → "Virtualization: Enabled". If disabled, turn on Intel VT-x or AMD-V in the BIOS/UEFI settings.
+## Ubuntu 24.04
 
-### 3.2 WSL 2
-Run in an **administrator** PowerShell, then reboot:
+```bash
+sudo apt update && sudo apt install -y openjdk-17-jdk python3-venv python3-pip git
+java -version && python3 --version          # 17.x and 3.12.x
+cd DataEngineering_ThePetabytePack
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+pip install -r producer/requirements.txt    # only for the Kafka stream (confluent-kafka)
+```
+
+## Windows 11
+
 ```powershell
-wsl --install
-```
-Verify:
-```powershell
-wsl --status
-```
-
-### 3.3 Docker Desktop
-```powershell
-winget install -e --id Docker.DockerDesktop
-```
-Start Docker Desktop and wait until the engine shows as running. In Settings → General, make sure **Use the WSL 2 based engine** is on.
-
-Verify:
-```powershell
-docker --version
-docker compose version
-docker run --rm hello-world
-```
-
-**Licensing:** free for personal use and small businesses; larger organizations need a paid subscription. A work-managed PC may need IT approval or admin rights.
-
-**Resources:** create `%UserProfile%\.wslconfig` to give Docker enough memory (Kafka, Spark, and four producers run together):
-```
-[wsl2]
-memory=8GB
-processors=4
-```
-Then run `wsl --shutdown` and restart Docker Desktop. Minimum is 6 GB; 8 GB is recommended.
-
-### 3.4 Git
-```powershell
-winget install --id Git.Git -e
-```
-Close and reopen the terminal, then:
-```powershell
-git --version
-git config --global user.name "Your Name"
-git config --global user.email "you@example.com"
-git init
-```
-
-### 3.5 Python
-```powershell
+winget install -e --id EclipseAdoptium.Temurin.17.JDK
 winget install -e --id Python.Python.3.12
+winget install -e --id Git.Git               # optional
 ```
-Reopen the terminal and verify with `python --version`. Then install the host-side tools (use a virtual environment):
+
+Reopen the terminal so PATH updates, then:
+
 ```powershell
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install pyarrow pandas pytest duckdb
+java -version; python --version
+cd DataEngineering_ThePetabytePack
+python -m venv .venv; .venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 ```
-Add `.venv/` to `.gitignore`.
 
-## 4. System requirements
+- **Without admin rights:** the Temurin `.zip` and the per-user Python installer don't need admin. Set `JAVA_HOME` and PATH for your user only.
+- **Kafka:** run it on a Linux machine. On Windows, use the stream's file source (`run.md` section 6).
+- **Spark writes on Windows:** writing local files needs `winutils.exe` and `hadoop.dll` (Hadoop 3.3.x) in `%HADOOP_HOME%\bin`. If a write fails with `HADOOP_HOME unset` or a `winutils` error, add them (see `../SetupC.md` section 4).
+- **Long paths:** keep the project in a short path such as `C:\proj`. The 260-character path limit breaks file reads in deep folders.
 
-- **RAM:** 16 GB total on the PC is comfortable; 8 GB allotted to WSL/Docker.
-- **Disk:** 15–20 GB free for images, input data, and output; **about 80 GB** once the batch milestone (M5) adds 24 months of input data (~13–14 GB), the Silver and Gold layers, and Spark temporary files; see `storage_requirements.md`.
-- **Ports free:** 9092 (Kafka), 8080 (Kafka UI, optional).
-- **Network:** internet access for image pulls and data downloads. A corporate proxy or firewall may block these.
-- **Location:** keep the project on a local drive (C:), not a network drive.
+## Requirements files
 
-## 5. Windows-specific notes
+| File | Contents | Where |
+|---|---|---|
+| `requirements-dev.txt` | pyspark, pyarrow, PyYAML, numpy, setuptools, duckdb, streamlit, pytest | Any machine that downloads, analyses or runs tests |
+| `spark/requirements.txt` | pyspark, PyYAML, numpy, setuptools | A Spark driver or worker that does nothing else |
+| `producer/requirements.txt` | confluent-kafka, pyarrow, PyYAML, numpy | The machine running the Kafka producers |
 
-- Shell scripts with CRLF line endings fail inside Linux containers. Add a `.gitattributes` with `*.sh text eol=lf` once scripts exist.
-- Bind mounts from Windows are slower than Linux filesystems, but fine at this project's scale. If permissions cause trouble, use a named Docker volume for `output/`.
-- Restart the terminal after installing anything that changes PATH.
-- **Running the Spark tests or `stream_job.py` on the host** needs Java 8, 11 or 17 on PATH and `pip install -r requirements-dev.txt`. A machine-wide `SPARK_HOME` pointing at a different Spark version (this VM has Spark 3.3.2) overrides the pip-installed PySpark and fails with py4j errors such as `legacyInferArrayTypeFromFirstElement does not exist`. The test suite sets `SPARK_HOME` and `PYSPARK_PYTHON` for its own process; for manual runs set them in that shell only: `$env:SPARK_HOME = (python -c "import os,pyspark;print(os.path.dirname(pyspark.__file__))")`.
-- **Long paths:** Windows' 260-character path limit breaks file reads in deeply nested folders (it made pyarrow report "path not found" for files that exist). Keep test output in a short path such as `%TEMP%\m3run`.
+`setuptools` is needed because `pyspark.ml` imports `distutils`, which Python 3.12 removed.
 
-## 6. Readiness check
+## System requirements
 
-Run before starting M1:
-```powershell
-wsl --status
-docker --version
-docker compose version
-docker run --rm hello-world
-git --version
-python --version
+- **RAM:** 8 GB works for one or a few months. The batch job's driver uses 4 GB by default (`config.yaml`).
+- **Disk:** 2 to 5 GB for a few months. About 80 GB for the full 24-month range (`storage_requirements.md`).
+- **Ports:** 9092 for Kafka, if used. 4040 for the Spark UI while a job runs. 8501 for the dashboard.
+
+## Readiness check
+
+```bash
+java -version && python --version && python -c "import pyspark; print(pyspark.__version__)"    # 17.x, 3.12.x, 3.5.3
+python -m pytest tests -q -k "not spark and not real_data"                                      # a few seconds
 ```
-If all of these succeed, the machine is ready.
-
-## 7. Current status on this machine
-
-| Software | Status |
-|---|---|
-| VS Code | Installed (`code .` worked) |
-| Git | **Not installed** (`git` not recognized) |
-| WSL 2 | Not checked |
-| Docker Desktop | Not checked |
-| Python | Not checked |

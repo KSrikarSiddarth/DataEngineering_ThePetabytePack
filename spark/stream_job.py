@@ -23,26 +23,20 @@ from pyspark.sql import types as T
 
 from dims import write_dims
 from gold import MARTS
+from storage import join, mkdirs
 from transform import SILVER_SCHEMA, deduplicate, process
 
 HERE = Path(__file__).resolve().parent
 
 
-def _first_existing(*paths):
-    for p in paths:
-        if p and Path(p).exists():
-            return Path(p)
-    raise FileNotFoundError(f"none of these exist: {[str(p) for p in paths if p]}")
-
-
 def load_config(env=os.environ):
-    cfg_path = _first_existing(env.get("CONFIG_PATH"), "/config/config.yaml", HERE.parent / "config.yaml")
-    ds_path = _first_existing(env.get("DATASETS_PATH"), "/config/datasets.yaml", HERE.parent / "producer" / "datasets.yaml")
+    cfg_path = Path(env.get("CONFIG_PATH") or HERE.parent / "config.yaml")
+    ds_path = Path(env.get("DATASETS_PATH") or HERE.parent / "producer" / "datasets.yaml")
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     ds = yaml.safe_load(ds_path.read_text(encoding="utf-8"))
     proc = cfg["processing"]
     return {
-        "bootstrap": env.get("KAFKA_BOOTSTRAP") or cfg["kafka"]["bootstrap_servers_internal"],
+        "bootstrap": env.get("KAFKA_BOOTSTRAP") or cfg["kafka"]["bootstrap_servers"],
         "specs": ds["datasets"],
         "norms": ds["normalize"],
         "proc": proc,
@@ -57,14 +51,32 @@ def load_config(env=os.environ):
 
 def build_spark(settings):
     """SparkSession for a job. `settings` is the job's config.yaml section (shuffle_partitions, spark_master,
-    driver_memory); the SPARK_MASTER and SPARK_DRIVER_MEMORY environment variables override it for one-off runs."""
-    return (SparkSession.builder.appName("nyc-taxi-m4")
-            .master(os.environ.get("SPARK_MASTER") or settings.get("spark_master", "local[2]"))
-            .config("spark.driver.memory", os.environ.get("SPARK_DRIVER_MEMORY") or settings.get("driver_memory", "2g"))
-            .config("spark.sql.session.timeZone", "UTC")   # naive ISO timestamps are treated as UTC
-            .config("spark.sql.shuffle.partitions", str(settings["shuffle_partitions"]))
-            .config("spark.sql.streaming.metricsEnabled", "false")
-            .getOrCreate())
+    driver_memory); the SPARK_MASTER and SPARK_DRIVER_MEMORY environment variables override it for one-off runs.
+    For ADLS Gen2, AZURE_STORAGE_ACCOUNT and AZURE_STORAGE_KEY give the account key (executors receive it with the
+    Spark conf) and SPARK_PACKAGES lists Maven packages, e.g. org.apache.hadoop:hadoop-azure:3.3.4.
+    For MinIO or another S3-compatible store (s3a:// paths), S3_ENDPOINT, S3_ACCESS_KEY and S3_SECRET_KEY give the
+    server and its keys; Spark's default redaction already hides the keys in the UI and event log."""
+    builder = (SparkSession.builder.appName("nyc-taxi-m4")
+               .master(os.environ.get("SPARK_MASTER") or settings.get("spark_master", "local[2]"))
+               .config("spark.driver.memory", os.environ.get("SPARK_DRIVER_MEMORY") or settings.get("driver_memory", "2g"))
+               .config("spark.sql.session.timeZone", "UTC")   # naive ISO timestamps are treated as UTC
+               .config("spark.sql.shuffle.partitions", str(settings["shuffle_partitions"]))
+               .config("spark.sql.streaming.metricsEnabled", "false"))
+    account, key = os.environ.get("AZURE_STORAGE_ACCOUNT"), os.environ.get("AZURE_STORAGE_KEY")
+    if account and key:
+        builder = (builder.config(f"spark.hadoop.fs.azure.account.key.{account}.dfs.core.windows.net", key)
+                   # Spark hides secrets in its UI and event log; its default pattern misses the storage account key
+                   .config("spark.redaction.regex", "(?i)secret|password|token|access[.]key|account[.]key"))
+    endpoint = os.environ.get("S3_ENDPOINT")
+    if endpoint:
+        builder = (builder.config("spark.hadoop.fs.s3a.endpoint", endpoint)
+                   .config("spark.hadoop.fs.s3a.access.key", os.environ["S3_ACCESS_KEY"])
+                   .config("spark.hadoop.fs.s3a.secret.key", os.environ["S3_SECRET_KEY"])
+                   .config("spark.hadoop.fs.s3a.path.style.access", "true")   # MinIO: bucket in the path, not the host
+                   .config("spark.hadoop.fs.s3a.connection.ssl.enabled", str(endpoint.startswith("https")).lower()))
+    if os.environ.get("SPARK_PACKAGES"):
+        builder = builder.config("spark.jars.packages", os.environ["SPARK_PACKAGES"])
+    return builder.getOrCreate()
 
 
 def load_zones(spark, path):
@@ -116,8 +128,8 @@ def start_sink(df, fmt, name, out, ckpt, conf, partition_by=None):
 
 
 def silver_paths(conf):
-    out = Path(conf["output_dir"])
-    return out / "silver" / "trips", out / "silver_invalid"
+    out = conf["output_dir"]
+    return join(out, "silver", "trips"), join(out, "silver_invalid")
 
 
 def start_silver(spark, conf, args, zones):
@@ -125,21 +137,21 @@ def start_silver(spark, conf, args, zones):
     silver, invalid = process(raw, conf["specs"], conf["norms"], zones, conf["proc"]["validation"])
     silver = deduplicate(silver, conf["proc"]["dedup_watermark_minutes"])
     trips_path, invalid_path = silver_paths(conf)
-    ckpt = Path(conf["checkpoint_dir"])
-    return [start_sink(silver, args.sink, "silver_trips", trips_path, ckpt / "silver_trips", conf, "service_type"),
-            start_sink(invalid, args.sink, "silver_invalid", invalid_path, ckpt / "silver_invalid", conf,
+    ckpt = conf["checkpoint_dir"]
+    return [start_sink(silver, args.sink, "silver_trips", trips_path, join(ckpt, "silver_trips"), conf, "service_type"),
+            start_sink(invalid, args.sink, "silver_invalid", invalid_path, join(ckpt, "silver_invalid"), conf,
                        "service_type")]
 
 
 def start_gold(spark, conf, args):
     """Read the Silver Parquet back as a stream and start one windowed aggregation per mart."""
     trips_path, _ = silver_paths(conf)
-    trips_path.mkdir(parents=True, exist_ok=True)   # the file source needs the folder to exist
-    silver = (spark.readStream.schema(SILVER_SCHEMA).parquet(str(trips_path))
+    mkdirs(spark, trips_path)   # the file source needs the folder to exist
+    silver = (spark.readStream.schema(SILVER_SCHEMA).parquet(trips_path)
               .withWatermark("pickup_ts", f"{int(conf['proc']['watermark_minutes'])} minutes"))
-    ckpt = Path(conf["checkpoint_dir"])
-    gold_dir = Path(conf["output_dir"]) / "gold"
-    return [start_sink(build(silver), args.sink, f"gold_{name}", gold_dir / name, ckpt / f"gold_{name}", conf)
+    ckpt = conf["checkpoint_dir"]
+    gold_dir = join(conf["output_dir"], "gold")
+    return [start_sink(build(silver), args.sink, f"gold_{name}", join(gold_dir, name), join(ckpt, f"gold_{name}"), conf)
             for name, build in MARTS.items()]
 
 
@@ -169,7 +181,7 @@ def main(argv=None):
     queries = []
     if args.stage in ("all", "silver"):
         if args.sink == "parquet":
-            write_dims(spark, zones, str(silver_paths(conf)[0].parent))
+            write_dims(spark, zones, join(conf["output_dir"], "silver"))
         silver_queries = start_silver(spark, conf, args, zones)
         if finite and args.stage == "all":
             # The Gold stream reads what Silver has committed, so a finite run finishes Silver first.
