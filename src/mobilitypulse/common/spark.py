@@ -143,12 +143,12 @@ def get_spark(
     master = master or s.get("master", "local[*]")
     cluster = str(master).startswith("spark://")
     if cluster:
+        if not s.get("driver_host"):  # check before touching the environment: a failed call must leave no trace
+            raise RuntimeError("cluster mode needs spark.driver_host (this machine's private IP; DRIVER_HOST / MASTER_IP "
+                               "in setupF.env): executors connect back to the driver on that address")
         # executors run on other (Linux) machines: they must not be sent the driver's own python path
         os.environ["PYSPARK_PYTHON"] = str(s.get("executor_python") or "python3")
         os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
-        if not s.get("driver_host"):
-            raise RuntimeError("cluster mode needs spark.driver_host (this machine's private IP; DRIVER_HOST / MASTER_IP "
-                               "in .env.setupF): executors connect back to the driver on that address")
     else:
         os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
         os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)

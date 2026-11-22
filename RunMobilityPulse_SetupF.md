@@ -33,7 +33,7 @@ Infrastructure: `SetupF.md` (Windows VM1 `spark-master`, Ubuntu VM2 `spark-worke
 Verified on one Linux machine with the same code path (a real Spark 3.5.3 standalone master and worker, and a real
 MinIO built from source, `spark://127.0.0.1:7077`, executors running a Python that does **not** have `mobilitypulse`
 installed, like VM2):
-- the full local test suite (97 pass: the original 87 plus 10 new cluster-mode tests) and `cluster-check`;
+- the full local test suite (98 pass: the original 87 plus 11 new cluster-mode tests) and `cluster-check`;
 - the full synthetic pipeline `demo`: sample, bronze, silver, demand, features, analytics, ml, anomaly, export, all on
   the executors with all lake data in MinIO (the ML stage took about 9 minutes on that 4-core, 6 GB machine);
 - `incremental` (second run reports "up to date");
@@ -72,7 +72,7 @@ newest code is on VM1, and VM2 and VM3 have `requirements-executor.txt`:
 ```bash
 cd ~/siddu/MTech/DataEngineeringAtScale
 tar czf /tmp/petabyte.tgz --exclude=data --exclude=output --exclude=.git --exclude=__pycache__ \
-    --exclude='.env.*' --exclude=.venv DataEngineering_ThePetabytePack
+    --exclude=setupF.env --exclude=.venv DataEngineering_ThePetabytePack
 scp /tmp/petabyte.tgz spark-master:C:/petabyte.tgz
 scp /tmp/petabyte.tgz spark-worker:~/          # VM2: executor packages, and the stream producer (section 5.2)
 scp /tmp/petabyte.tgz spark-worker-2:~/        # VM3: only for the executor packages file
@@ -85,8 +85,8 @@ tar -xzf C:\petabyte.tgz -C C:\
 cd C:\DataEngineering_ThePetabytePack
 ```
 
-`.env.*` is excluded on purpose: it holds the MinIO password, so a `.env.setupF` already on a VM is not overwritten.
-The same `.env.setupF` file works for both projects.
+`setupF.env` is excluded on purpose: it holds the MinIO password, so a `setupF.env` already on a VM is not overwritten.
+The same `setupF.env` file works for both projects.
 
 ### 2.2 VM2 and VM3: packages for the executors
 
@@ -102,7 +102,7 @@ python3 -c "import numpy, pandas, pyarrow, pyspark; print('executor packages ok'
 ```
 
 `python3` must be the interpreter the worker finds, and it must be the same Python 3.12 on VM2 and VM3. If you prefer a venv, use its `bin/python` path as
-`EXECUTOR_PYTHON` in `.env.setupF` (step 2.4).
+`EXECUTOR_PYTHON` in `setupF.env` (step 2.4).
 
 ### 2.3 VM1: Python 3.12 environment for the driver
 
@@ -121,13 +121,13 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
   existing `HADOOP_HOME`, and its setup script only downloads its own copy into `tools\hadoop` if you have none.
 - If `setup` prints a warning about JDK 17 you already installed: `$env:JAVA_HOME` is set machine-wide by SetupF, so ignore it.
 
-### 2.4 VM1: the settings file `.env.setupF`
+### 2.4 VM1: the settings file `setupF.env`
 
 Same format and names as SetupF 8.2. Notepad doesn't work over SSH, so use a here-string and fill in the values:
 
 ```powershell
-Copy-Item setupF.env.example .env.setupF      # to see every setting; or write it directly:
-Set-Content .env.setupF @"
+Copy-Item setupF.env.example setupF.env      # to see every setting; or write it directly:
+Set-Content setupF.env @"
 S3_ENDPOINT=http://<VM2_IP>:9000
 S3_ACCESS_KEY=sparkadmin
 S3_SECRET_KEY=<MINIO_PASSWORD>
@@ -139,7 +139,7 @@ TOTAL_CORES=6
 EXECUTOR_PYTHON=python3
 KAFKA_BOOTSTRAP=
 "@
-Get-Content .env.setupF
+Get-Content setupF.env
 ```
 
 - **`TOTAL_CORES=6`:** two workers with 3 cores each, and `EXECUTOR_CORES=3`, give **two executors, one per worker**. With `TOTAL_CORES=3` only one executor would start and one worker would idle. Use 3 if you deallocate VM3.
@@ -218,7 +218,7 @@ Single stages work too: `.\mp.cmd silver -Months medium -Cluster`, `.\mp.cmd ml 
 
 | Setting | Where | Default |
 |---|---|---|
-| Driver and executor memory, cores | `.env.setupF` (`DRIVER_MEMORY`, `EXECUTOR_MEMORY`, `EXECUTOR_CORES`, `TOTAL_CORES`) | 2g, 3g, 3, 6 |
+| Driver and executor memory, cores | `setupF.env` (`DRIVER_MEMORY`, `EXECUTOR_MEMORY`, `EXECUTOR_CORES`, `TOTAL_CORES`) | 2g, 3g, 3, 6 |
 | Shuffle partitions | `$env:MP__SPARK__SHUFFLE_PARTITIONS = "16"` or `configs/profile_setupf.yaml` | 16 |
 | Fewer or lighter models | `$env:MP__ML__MODELS = "[linear_regression, gbt]"`, `$env:MP__ML__GBT__MAX_ITER = "60"` | 3 models, 150 iterations |
 | Any config value | `MP__SECTION__KEY` environment variable | see `configs/config.yaml` |
@@ -257,7 +257,7 @@ Open http://localhost:8501 (dashboard) and http://localhost:8000/docs (API).
 
 ## 5. The stream path (optional): Kafka on VM2
 
-Memory on VM2 is tight with MinIO, the worker (4g) and Kafka (1g). Set `EXECUTOR_MEMORY=2g` in `.env.setupF` while streaming (the setting applies to both executors; VM3 alone would have room for more). VM3's executor reaches Kafka at `<VM2_IP>:9092` over the VNet.
+Memory on VM2 is tight with MinIO, the worker (4g) and Kafka (1g). Set `EXECUTOR_MEMORY=2g` in `setupF.env` while streaming (the setting applies to both executors; VM3 alone would have room for more). VM3's executor reaches Kafka at `<VM2_IP>:9092` over the VNet.
 
 ### 5.1 Kafka on VM2
 
@@ -269,17 +269,17 @@ infra/setupF/kafka_native.sh start
 infra/setupF/kafka_native.sh topics                # taxi-trips (4 partitions) and taxi-trips-dlq
 ```
 
-Kafka doesn't restart by itself after a reboot: run `start` again. Add `KAFKA_BOOTSTRAP=<VM2_IP>:9092` to `.env.setupF` on **both** VM1 and VM2 (VM3 gets it from the driver).
+Kafka doesn't restart by itself after a reboot: run `start` again. Add `KAFKA_BOOTSTRAP=<VM2_IP>:9092` to `setupF.env` on **both** VM1 and VM2 (VM3 gets it from the driver).
 
 ### 5.2 Producer (VM2)
 
 The producer replays January 2024 trips from bronze (read from MinIO) into Kafka. It needs the project in a venv with
-`confluent-kafka`, and a `.env.setupF` with the S3 settings and `KAFKA_BOOTSTRAP`:
+`confluent-kafka`, and a `setupF.env` with the S3 settings and `KAFKA_BOOTSTRAP`:
 
 ```bash
 sudo apt install -y python3-venv make
 make setup CLUSTER=1 PYTHON311=python3.12          # venv ~/.venvs/mp312
-cp setupF.env.example .env.setupF && nano .env.setupF   # S3_ENDPOINT=http://<VM2_IP>:9000, keys, KAFKA_BOOTSTRAP=<VM2_IP>:9092
+cp setupF.env.example setupF.env && nano setupF.env   # S3_ENDPOINT=http://<VM2_IP>:9000, keys, KAFKA_BOOTSTRAP=<VM2_IP>:9092
 make produce CLUSTER=1 RATE=2000 MAX=50000         # needs bronze for 2024-01 (the batch pipeline above)
 ```
 
@@ -304,7 +304,7 @@ make produce CLUSTER=1 RATE=2000 MAX=50000         # needs bronze for 2024-01 (t
 
 | Problem | Cause and fix |
 |---|---|
-| `.env.setupF` ignored, job runs locally | The profile is only used with `-Cluster` (or `MP_PROFILE=setupf`). `check` prints `master : spark://...` and `data dir : s3a://...`; if it shows `local[*]`, the flag or `MASTER_IP` is missing |
+| `setupF.env` ignored, job runs locally | The profile is only used with `-Cluster` (or `MP_PROFILE=setupf`). `check` prints `master : spark://...` and `data dir : s3a://...`; if it shows `local[*]`, the flag or `MASTER_IP` is missing |
 | `object store: ... NETWORK_CONNECTION / Couldn't connect` | MinIO not reachable on `<VM2_IP>:9000` from VM1: `Test-NetConnection <VM2_IP> -Port 9000`, `systemctl status minio` on VM2 |
 | `NO_SUCH_BUCKET` | Create it on VM2: `mc mb local/lake` (`check` creates it for you when missing) |
 | `InvalidAccessKeyId` / `SignatureDoesNotMatch` | Wrong `S3_ACCESS_KEY` / `S3_SECRET_KEY`, or a password with special characters: see SetupF 7.6 |
@@ -326,14 +326,14 @@ make produce CLUSTER=1 RATE=2000 MAX=50000         # needs bronze for 2024-01 (t
 | File | Change |
 |---|---|
 | `src/mobilitypulse/common/storage.py` (new) | `RemotePath` (an `s3a://bucket/key` that behaves like `pathlib.Path`: `/`, `exists`, `read_text`, `write_text`, `glob`) and helpers for pyarrow/pandas reads, writes, delete and upload, so one code path serves a local folder and MinIO |
-| `common/config.py`, `configs/config.yaml` | `paths.data_dir` may be an `s3a://` URI. New `paths.local_dir` (raw downloads, state, serving DB, benchmark output stay on the driver machine) and `paths.raw_lake`. New `storage` and cluster `spark` settings. Profiles: `MP_PROFILE=setupf` layers `configs/profile_setupf.yaml` and `.env.setupF` |
+| `common/config.py`, `configs/config.yaml` | `paths.data_dir` may be an `s3a://` URI. New `paths.local_dir` (raw downloads, state, serving DB, benchmark output stay on the driver machine) and `paths.raw_lake`. New `storage` and cluster `spark` settings. Profiles: `MP_PROFILE=setupf` layers `configs/profile_setupf.yaml` and `setupF.env` |
 | `common/spark.py` | Cluster mode when `spark.master` is `spark://...`: driver host and ports 40000-40002, executor memory/cores, `PYSPARK_PYTHON` for the (Linux) executors, S3A settings for MinIO and the `hadoop-aws` jars, and the `mobilitypulse` package shipped to the executors for the Python UDFs. Local mode is unchanged |
 | `batch/bronze.py`, `ingestion/download.py`, `ingestion/sample.py` | Bronze reads raw files from `raw_lake`. `ingest`, `sample` and `bronze` upload new or changed raw files to MinIO |
 | `ml/train.py`, `ml/anomaly.py`, `serving/export.py`, `streaming/producer.py`, `streaming/stream_job.py`, `common/utils.py` | The few non-Spark file operations (small parquet files, `best_model.json`, delete, reads with pyarrow) go through the storage layer |
 | `cluster_check.py` (new), `mp.ps1`, `mp.cmd`, `setup_windows.ps1`, `Makefile` | `-Cluster` / `CLUSTER=1`, `check` / `cluster-check`, Python 3.12 venv for the cluster |
 | `infra/setupF/kafka_native.sh` (new) | Native single-broker Kafka on VM2 instead of Docker |
-| `setupF.env.example`, `requirements-executor.txt` (new), `.gitignore` | Settings template (`.env.setupF` is git-ignored; `TOTAL_CORES=6` for two workers), executor packages |
-| `tests/unit/test_cluster_mode.py` (new) | 10 tests for the storage layer, profile, settings mapping and Spark settings (no cluster needed) |
+| `setupF.env.example`, `requirements-executor.txt` (new), `.gitignore` | Settings template (`setupF.env` is git-ignored; `TOTAL_CORES=6` for two workers), executor packages |
+| `tests/unit/test_cluster_mode.py` (new) | 11 tests for the storage layer, profile, settings file, mapping and Spark settings (no cluster needed) |
 
 ## 8. Not covered
 

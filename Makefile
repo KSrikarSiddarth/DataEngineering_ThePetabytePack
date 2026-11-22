@@ -1,7 +1,7 @@
 # NYC MobilityPulse - developer commands. Run from this directory.
 # Paths in this repo contain spaces (OneDrive); every command below avoids $(CURDIR) for that reason.
 
-# CLUSTER=1 runs on the SetupF Spark cluster + MinIO (reads .env.setupF; see RunMobilityPulse_SetupF.md).
+# CLUSTER=1 runs on the SetupF Spark cluster + MinIO (reads setupF.env; see RunMobilityPulse_SetupF.md).
 # The Python minor version must match the executors (Ubuntu 24.04 = 3.12), so the cluster venv is separate.
 ifeq ($(CLUSTER),1)
 export MP_PROFILE := setupf

@@ -124,7 +124,7 @@ def test_cluster_env_mapping():
 
 
 def test_setupf_profile(monkeypatch, tmp_path):
-    env_file = tmp_path / ".env.setupF"
+    env_file = tmp_path / "setupF.env"
     env_file.write_text("# comment\nS3_ENDPOINT=http://10.0.0.5:9000\nS3_ACCESS_KEY=sparkadmin\n"
                         "S3_SECRET_KEY=pw123456\nMASTER_IP=10.0.0.4\nKAFKA_BOOTSTRAP=\n")
     for name in ("MASTER_IP", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "KAFKA_BOOTSTRAP", "MOBILITYPULSE_DATA_DIR"):
@@ -138,6 +138,16 @@ def test_setupf_profile(monkeypatch, tmp_path):
     assert storage.s3_settings()["endpoint"] == "http://10.0.0.5:9000"
     monkeypatch.setenv("MP__SPARK__EXECUTOR_MEMORY", "2g")                      # MP__ overrides still win
     assert load_config().section("spark")["executor_memory"] == "2g"
+
+
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """load_config(profile) copies settings-file values into os.environ; undo that after every test in this module."""
+    import os
+    before = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(before)
 
 
 def test_unknown_profile(monkeypatch):
@@ -174,3 +184,16 @@ def test_spark_session_settings_for_cluster(monkeypatch):
     import zipfile
     names = zipfile.ZipFile(zip_path).namelist()
     assert "mobilitypulse/ml/metrics.py" in names and "mobilitypulse/common/storage.py" in names
+
+
+def test_profile_finds_setupF_env_in_the_project_folder(monkeypatch, tmp_path):
+    """The default settings file is <project>/setupF.env (found even though the profile name is lower case)."""
+    from mobilitypulse.common import config as cfgmod
+
+    (tmp_path / "setupF.env").write_text("MASTER_IP=10.9.8.7\nS3_ENDPOINT=http://10.9.8.6:9000\n")
+    monkeypatch.setattr(cfgmod, "PROJECT_ROOT", tmp_path)
+    for name in ("MASTER_IP", "S3_ENDPOINT", "MP_ENV_FILE", "MOBILITYPULSE_DATA_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("MP_PROFILE", "setupf")
+    assert cfgmod._profile_env_file("setupf") == tmp_path / "setupF.env"
+    assert load_config().section("spark")["master"] == "spark://10.9.8.7:7077"

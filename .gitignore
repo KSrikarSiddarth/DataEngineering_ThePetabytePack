@@ -30,6 +30,4 @@ tools/
 __pycache__/
 .pytest_cache/
 # SetupF cluster settings (hold the MinIO password)
-.env.setupF
-.env.*
-!setupF.env.example
+setupF.env

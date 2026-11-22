@@ -281,7 +281,7 @@ Everything above runs Spark as `local[*]` on one machine. The same code also run
 the data lake on an S3-compatible store (MinIO), so executors on other machines read and write the data:
 
 ```bash
-cp setupF.env.example .env.setupF           # MASTER_IP, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, memory, cores
+cp setupF.env.example setupF.env           # MASTER_IP, S3_ENDPOINT, S3_ACCESS_KEY, S3_SECRET_KEY, memory, cores
 make cluster-check CLUSTER=1                 # Windows: .\mp.cmd check -Cluster
 make pipeline MONTHS=medium CLUSTER=1        # Windows: .\mp.cmd pipeline -Months medium -Cluster
 ```

@@ -19,7 +19,7 @@ param(
     [int]$Rate = 0,
     [int]$Max = 0,
     [switch]$Force,
-    [switch]$Cluster,                   # run on the SetupF Spark cluster + MinIO (settings in .env.setupF)
+    [switch]$Cluster,                   # run on the SetupF Spark cluster + MinIO (settings in setupF.env)
     [string]$Experiments = "",
     [string]$SampleDir = (Join-Path $env:USERPROFILE "mobilitypulse_sample")
 )

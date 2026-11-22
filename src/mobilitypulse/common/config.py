@@ -18,7 +18,7 @@ ENV_PREFIX = "MP__"
 DATA_DIR_ENV = "MOBILITYPULSE_DATA_DIR"
 CONFIG_ENV = "MOBILITYPULSE_CONFIG"
 PROFILE_ENV = "MP_PROFILE"          # "setupf" = Spark standalone cluster + MinIO (see RunMobilityPulse_SetupF.md)
-ENV_FILE_ENV = "MP_ENV_FILE"        # KEY=VALUE settings file for the profile (default: <project>/.env.setupF)
+ENV_FILE_ENV = "MP_ENV_FILE"        # KEY=VALUE settings file for the profile (default: <project>/setupF.env)
 PROFILE_DIR = PROJECT_ROOT / "configs"
 
 
@@ -55,6 +55,16 @@ def apply_env_overrides(raw: dict, environ: dict[str, str] | None = None) -> dic
             node = node[part]
         node[parts[-1]] = _coerce(value)
     return out
+
+
+def _profile_env_file(profile: str) -> Path:
+    """<project>/<profile>.env, e.g. setupF.env for profile setupf. The name is matched ignoring case, because
+    Linux file names are case-sensitive and the profile name is lower case."""
+    wanted = f"{profile}.env".lower()
+    for candidate in PROJECT_ROOT.glob("*.env"):
+        if candidate.name.lower() == wanted:
+            return candidate
+    return PROJECT_ROOT / f"{profile}.env"
 
 
 def load_env_file(path: str | Path) -> dict[str, str]:
@@ -148,7 +158,7 @@ def load_config(path: str | Path | None = None, overrides: dict | None = None) -
         if not profile_file.exists():
             raise FileNotFoundError(f"unknown profile {profile!r}: {profile_file} does not exist")
         raw = deep_merge(raw, yaml.safe_load(profile_file.read_text(encoding="utf-8")) or {})
-        env_file = Path(os.environ.get(ENV_FILE_ENV) or PROJECT_ROOT / f".env.{profile}")
+        env_file = Path(os.environ.get(ENV_FILE_ENV) or _profile_env_file(profile))
         if env_file.exists():
             load_env_file(env_file)
         raw = apply_cluster_env(raw)

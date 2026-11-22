@@ -1,6 +1,6 @@
 # SetupF profile: Spark standalone cluster (master on VM1, worker on VM2) + MinIO on VM2.
 # Activated with MP_PROFILE=setupf (.\mp.ps1 -Cluster / make CLUSTER=1). Cluster addresses, memory and the MinIO keys
-# come from .env.setupF (copy setupF.env.example); see RunMobilityPulse_SetupF.md.
+# come from setupF.env (copy setupF.env.example); see RunMobilityPulse_SetupF.md.
 paths:
   data_dir: s3a://lake/mobilitypulse      # bronze, silver, gold, quarantine, models, checkpoints, stream output
   local_dir: ~/mobilitypulse_data         # downloads, pipeline state, serving DB: stay on the driver machine
