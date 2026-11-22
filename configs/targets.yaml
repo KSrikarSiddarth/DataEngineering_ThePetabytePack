@@ -28,6 +28,9 @@ targets:
   - {id: M7, area: Forecast, metric: "GBT MAE improvement vs Linear Regression", key: ml.gbt_vs_lr_mae_improvement_pct, op: ">=", threshold: 10, unit: "%"}
   - {id: M8, area: Forecast, metric: "Worst major-borough WAPE", key: ml.worst_borough_wape_pct, op: "<=", threshold: 35, unit: "%"}
   - {id: M9, area: Forecast, metric: "Weekday peak-hour WAPE", key: ml.peak_wape_pct, op: "<=", threshold: 22, unit: "%"}
+  # Diagnostics (INFO rows never pass or fail): they explain FAILs above without changing any target.
+  - {id: M8f, area: Forecast, metric: "Poisson-noise floor of the worst borough's WAPE (explains M8)", key: ml.worst_borough_floor_wape_pct, op: "info", threshold: null, unit: "%"}
+  - {id: M7t, area: Forecast, metric: "GBT validation grid-search time (only recorded when ml.tuning.enabled)", key: ml.gbt_tuning_min, op: "info", threshold: null, unit: min}
 
   # ---------------- Anomaly detection ----------------
   - {id: A1, area: Anomaly, metric: "Recall on injected anomalies (residual detector)", key: anomaly.injected_recall, op: ">=", threshold: 0.80, unit: ""}
@@ -36,6 +39,8 @@ targets:
   - {id: A4a, area: Anomaly, metric: "Precision vs MAD rule labels (real data)", key: anomaly.rule_precision, op: ">=", threshold: 0.60, unit: ""}
   - {id: A4b, area: Anomaly, metric: "Recall vs MAD rule labels (real data)", key: anomaly.rule_recall, op: ">=", threshold: 0.60, unit: ""}
   - {id: A5, area: Anomaly, metric: "Alert rate on un-injected test data", key: anomaly.alert_rate_pct, op: "<=", threshold: 1.0, unit: "%"}
+  - {id: A4c, area: Anomaly, metric: "Max recall vs MAD labels reachable at the current alert volume (explains A4b)", key: anomaly.rule_recall_ceiling, op: "info", threshold: null, unit: ""}
+  - {id: A4d, area: Anomaly, metric: "Share of eligible zone-hours the MAD rule labels anomalous", key: anomaly.rule_positive_rate_pct, op: "info", threshold: null, unit: "%"}
 
   # ---------------- ML operational ----------------
   - {id: O1, area: ML ops, metric: "GBT training time (medium)", key: ml.gbt_train_min, op: "<=", threshold: 15, unit: min}
@@ -48,6 +53,8 @@ targets:
   - {id: B3, area: Batch, metric: "Worst data-scaling efficiency (S->M, M->L)", key: batch.scaling_efficiency_min, op: ">=", threshold: 0.75, unit: ""}
   - {id: B4, area: Batch, metric: "Broadcast vs sort-merge join speedup", key: batch.broadcast_speedup, op: ">=", threshold: 1.2, unit: x}
   - {id: B5, area: Batch, metric: "Cached vs uncached reuse speedup", key: batch.cache_speedup, op: ">=", threshold: 1.5, unit: x}
+  - {id: B5w, area: Batch, metric: "Cache speedup when recompute is a cheap scan, wide table cached (contrast)", key: batch.cache_speedup_scan_wide, op: "info", threshold: null, unit: x}
+  - {id: B5n, area: Batch, metric: "Cache speedup when recompute is a cheap scan, needed columns cached (contrast)", key: batch.cache_speedup_scan_narrow, op: "info", threshold: null, unit: x}
   - {id: B6, area: Batch, metric: "Best shuffle-partition count (informational)", key: batch.best_partitions, op: "info", threshold: null, unit: partitions}
   - {id: B7, area: Batch, metric: "Parquet vs CSV scan speedup", key: batch.parquet_vs_csv_speedup, op: ">=", threshold: 3, unit: x}
 

@@ -166,11 +166,16 @@ def run_anomaly(spark: SparkSession, cfg: Config) -> dict:
     pd.DataFrame(rows).to_parquet(out / "anomaly_metrics.parquet", index=False)
 
     inj, rule, live = results["injected:residual_flag"], results["rule:residual_flag"], results["real:residual_flag"]
+    # Diagnostic for A4b: with `alerts` residual alerts against `positives` rule labels, recall can never exceed
+    # alerts / positives, even if every alert were a true match. It shows how far the alert-rate cap (A5) limits A4b.
+    rule_positives = rule["tp"] + rule["fn"]
     record_measurements(cfg, {
         "anomaly.injected_recall": inj["recall"], "anomaly.injected_precision": inj["precision"],
         "anomaly.injected_f1": inj["f1"], "anomaly.rule_precision": rule["precision"],
         "anomaly.rule_recall": rule["recall"], "anomaly.alert_rate_pct": live["alert_rate_pct"],
-    }, {"best_model": best, "injected_rows": inj["tp"] + inj["fn"]})
+        "anomaly.rule_recall_ceiling": min(1.0, (rule["tp"] + rule["fp"]) / rule_positives) if rule_positives else None,
+        "anomaly.rule_positive_rate_pct": 100.0 * rule_positives / max(rule["n"], 1),
+    }, {"best_model": best, "injected_rows": inj["tp"] + inj["fn"], "rule_positives": rule_positives})
     n_anom = spark.read.parquet(str(cfg.path("gold") / "anomalies")).count()
     real.unpersist()
     injected.unpersist()

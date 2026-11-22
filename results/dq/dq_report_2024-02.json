@@ -1,32 +1,31 @@
 {
   "month": "2024-02",
   "rejects_by_reason": {
-    "DISTANCE_OUT_OF_RANGE": 44562,
-    "DURATION_OUT_OF_RANGE": 35472,
-    "FARE_OUT_OF_RANGE": 30389,
-    "INVALID_ZONE": 26226,
-    "SPEED_IMPLAUSIBLE": 50,
-    "OUTSIDE_SOURCE_MONTH": 15,
-    "NEGATIVE_DURATION": 7,
-    "DUPLICATE": 1
+    "DISTANCE_OUT_OF_RANGE": 1131,
+    "DURATION_OUT_OF_RANGE": 1124,
+    "FARE_OUT_OF_RANGE": 1126,
+    "INVALID_ZONE": 1126,
+    "OUTSIDE_SOURCE_MONTH": 1126,
+    "DUPLICATE": 439,
+    "NEGATIVE_DURATION": 1127
   },
-  "valid_rows": 2870804,
-  "input_rows": 3007526,
+  "valid_rows": 218224,
+  "input_rows": 225423,
   "null_counts": {
     "pickup_ts": 0,
     "dropoff_ts": 0,
     "pickup_zone_id": 0,
     "dropoff_zone_id": 0,
-    "passenger_count": 185610,
+    "passenger_count": 0,
     "trip_distance": 0,
     "total_amount": 0,
     "payment_type": 0,
-    "ratecode_id": 185610
+    "ratecode_id": 0
   },
-  "rejected_rows": 136722,
-  "duplicates": 1,
-  "written_valid_rows": 2870804,
-  "written_rejected_rows": 136722,
+  "rejected_rows": 7199,
+  "duplicates": 439,
+  "written_valid_rows": 218224,
+  "written_rejected_rows": 7199,
   "reconciliation_diff": 0,
-  "reject_rate_pct": 4.546
+  "reject_rate_pct": 3.194
 }

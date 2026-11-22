@@ -3,15 +3,15 @@
 
 VENV        ?= $(HOME)/.venvs/mp311
 PY          := $(VENV)/bin/python
-PYTHON311   ?= /opt/homebrew/opt/python@3.11/bin/python3.11
+PYTHON311   ?= python3.11
 COMPOSE     := docker compose -f infra/docker-compose.yml
 MONTHS      ?= default
 SAMPLE_DIR  ?= $(HOME)/mobilitypulse_sample
-export JAVA_HOME ?= /opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+export JAVA_HOME ?= /usr/lib/jvm/java-17-openjdk-amd64
 
 .PHONY: help setup ingest pipeline bronze silver demand features analytics ml anomaly export demo \
         kafka-up kafka-down kafka-ui kafka-topics stream produce bench-batch bench-stream scorecard \
-        api dashboard test test-fast clean-sample
+        api dashboard test test-fast clean-sample concepts incremental
 
 help:
 	@grep -E '^[a-z-]+:.*?## ' Makefile | awk -F':.*?## ' '{printf "  %-14s %s\n", $$1, $$2}'
@@ -28,6 +28,8 @@ ingest: ## download TLC/zones/NOAA for MONTHS into raw/
 	$(PY) -m mobilitypulse.cli --stage ingest --months $(MONTHS)
 pipeline: ## ingest + bronze..export for MONTHS
 	$(PY) -m mobilitypulse.cli --stage all --months $(MONTHS)
+incremental: ## process only new/unfinished/changed MONTHS (state table in <data>/state), then refresh features + analytics
+	$(PY) -m mobilitypulse.cli --stage incremental --months $(MONTHS) $(if $(FORCE),--force)
 bronze silver demand features analytics:
 	$(PY) -m mobilitypulse.cli --stage $@ --months $(MONTHS)
 ml anomaly export:
@@ -57,6 +59,8 @@ bench-batch: ## batch experiments E1-E5 (needs bronze for datasets.large months)
 	$(PY) -m mobilitypulse.benchmark.batch_bench
 bench-stream: ## streaming experiments (needs Kafka + bronze for producer.replay_month)
 	$(PY) -m mobilitypulse.benchmark.stream_bench
+concepts: ## Spark internals evidence pack (lazy eval, narrow/wide, skew, silver vs gold) -> results/concepts
+	$(PY) -m mobilitypulse.benchmark.concepts $(EXPERIMENTS)
 test: ## full test suite with coverage -> results/tests
 	mkdir -p results/tests
 	$(PY) -m pytest --cov --cov-report=term --cov-report=json:results/tests/coverage.json \

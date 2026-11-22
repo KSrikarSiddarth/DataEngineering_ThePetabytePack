@@ -1,0 +1,5 @@
+question,layer,seconds_median,stages,tasks,input_mb,shuffle_mb,answers_match,silver_over_gold_time
+top10_zones_one_day,gold_lookup,0.0646,3.0,3.0,0.017,0.001,True,0.84984520123839
+top10_zones_one_day,silver_scan,0.0549,2.0,2.0,0.08,0.002,True,0.84984520123839
+trips_by_borough_month,gold_lookup,0.0317,1.0,1.0,0.005,0.0,True,3.605678233438486
+trips_by_borough_month,silver_scan,0.1143,2.0,16.0,6.808,0.013,True,3.605678233438486

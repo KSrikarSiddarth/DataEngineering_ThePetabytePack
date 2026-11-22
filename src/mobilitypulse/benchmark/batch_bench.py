@@ -5,13 +5,14 @@ import argparse
 import shutil
 
 import pandas as pd
+from pyspark import StorageLevel
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 from ..batch.demand import build_zone_hour_demand
 from ..batch.features import build_features
 from ..batch.quality import apply_quality
-from ..batch.silver import build_silver_trips, build_weather_hourly, enrich_trips
+from ..batch.silver import build_silver_trips, build_weather_hourly, dq_report, enrich_trips
 from ..common.config import Config, load_config
 from ..common.spark import get_spark
 from ..common.utils import Timer, get_logger, record_measurements
@@ -126,8 +127,41 @@ def e3_join(spark: SparkSession, cfg: Config) -> dict:
 
 
 # ------------------------------------------------------------------ E4 caching a reused DataFrame
+SCAN_QUERY_COLUMNS = ["pickup_zone_id", "pickup_borough", "dropoff_borough", "total_amount", "duration_min",
+                      "hour_of_day", "payment_type"]
+
+
 def e4_cache(spark: SparkSession, cfg: Config) -> dict:
+    """Does caching pay off? Two scenarios, because the answer depends on how expensive recomputation is.
+
+    1. pipeline reuse (scored, B5): the quality-flagged bronze frame that build_silver_trips really reuses - one
+       window-based dedupe (a shuffle) feeding three consumers (silver output, quarantine output, DQ report).
+       Without a cache every consumer recomputes the dedupe.
+    2. scan-only reuse (informational): five aggregations over silver Parquet. Recomputing is a cheap, column-pruned
+       scan, so caching the *wide* table is slower than not caching; caching only the needed columns is the fair
+       comparison. This was the original B5 benchmark, which cached all columns and so read ~34x more data.
+    """
     months = cfg.section("datasets")["medium"]
+    bronze = spark.read.parquet(str(cfg.path("bronze") / "trips")).where(F.col("source_month").isin(months))
+    quality = cfg.section("quality")
+
+    def pipeline_reuse(cache: bool):
+        def run():
+            flagged = apply_quality(bronze, quality)
+            if cache:
+                flagged = flagged.persist(StorageLevel.MEMORY_AND_DISK)
+                flagged.count()  # materialise once, as the silver build does
+            flagged.where(F.col("reject_reason").isNull()).write.format("noop").mode("overwrite").save()
+            flagged.where(F.col("reject_reason").isNotNull()).write.format("noop").mode("overwrite").save()
+            dq_report(flagged, months)
+            if cache:
+                flagged.unpersist()
+        return run
+
+    u = run_benchmark(spark, cfg, "e4_cache", "pipeline_uncached", pipeline_reuse(False))
+    c = run_benchmark(spark, cfg, "e4_cache", "pipeline_cached", pipeline_reuse(True))
+    speedup = median_seconds(u) / median_seconds(c)
+
     trips = spark.read.parquet(str(cfg.path("silver") / "trips_clean")).where(F.col("source_month").isin(months))
 
     def queries(df):
@@ -137,22 +171,28 @@ def e4_cache(spark: SparkSession, cfg: Config) -> dict:
         df.groupBy("payment_type").count().collect()
         df.groupBy("pickup_borough", "dropoff_borough").count().collect()
 
-    def work(cache: bool):
+    def scan_reuse(mode: str):
         def run():
-            base = trips.where("trip_distance > 0.5").withColumn("fare_per_mile", F.col("total_amount") / F.col("trip_distance"))
-            if cache:
+            base = trips.where("trip_distance > 0.5")
+            if mode == "wide":
                 base = base.cache()
                 base.count()
+            elif mode == "narrow":
+                base = base.select(*SCAN_QUERY_COLUMNS).cache()
+                base.count()
             queries(base)
-            if cache:
+            if mode != "none":
                 base.unpersist()
         return run
 
-    u = run_benchmark(spark, cfg, "e4_cache", "uncached", work(False))
-    c = run_benchmark(spark, cfg, "e4_cache", "cached", work(True))
-    speedup = median_seconds(u) / median_seconds(c)
-    record_measurements(cfg, {"batch.cache_speedup": speedup})
-    return {"cache_speedup": speedup}
+    scan = {m: median_seconds(run_benchmark(spark, cfg, "e4_cache", f"scan_{m}", scan_reuse(m)))
+            for m in ["none", "wide", "narrow"]}
+    record_measurements(cfg, {"batch.cache_speedup": speedup,
+                              "batch.cache_speedup_scan_wide": scan["none"] / scan["wide"],
+                              "batch.cache_speedup_scan_narrow": scan["none"] / scan["narrow"]},
+                        {"scored_scenario": "pipeline_reuse", "scan_median_seconds": scan})
+    return {"cache_speedup": speedup, "scan_median_seconds": scan,
+            "scan_speedup_wide": scan["none"] / scan["wide"], "scan_speedup_narrow": scan["none"] / scan["narrow"]}
 
 
 # ------------------------------------------------------------------ E5 Parquet vs CSV

@@ -2,50 +2,50 @@
   "anomaly.alert_rate_pct": {
     "context": {
       "best_model": "ensemble",
-      "injected_rows": 263
+      "injected_rows": 8
     },
-    "recorded_at": "2026-11-07T12:50:59+00:00",
-    "value": 0.7786954960403712
+    "recorded_at": "2026-11-20T13:16:23+00:00",
+    "value": 0.39317507418397624
   },
   "anomaly.injected_f1": {
     "context": {
       "best_model": "ensemble",
-      "injected_rows": 263
+      "injected_rows": 8
     },
-    "recorded_at": "2026-11-07T12:50:59+00:00",
-    "value": 0.7632850241545894
+    "recorded_at": "2026-11-20T13:16:23+00:00",
+    "value": 0.9411764705882353
   },
   "anomaly.injected_precision": {
     "context": {
       "best_model": "ensemble",
-      "injected_rows": 263
+      "injected_rows": 8
     },
-    "recorded_at": "2026-11-07T12:50:59+00:00",
-    "value": 0.6620111731843575
+    "recorded_at": "2026-11-20T13:16:23+00:00",
+    "value": 0.8888888888888888
   },
   "anomaly.injected_recall": {
     "context": {
       "best_model": "ensemble",
-      "injected_rows": 263
+      "injected_rows": 8
     },
-    "recorded_at": "2026-11-07T12:50:59+00:00",
-    "value": 0.9011406844106464
+    "recorded_at": "2026-11-20T13:16:23+00:00",
+    "value": 1.0
   },
   "anomaly.rule_precision": {
     "context": {
       "best_model": "ensemble",
-      "injected_rows": 263
+      "injected_rows": 8
     },
-    "recorded_at": "2026-11-07T12:50:59+00:00",
-    "value": 0.6845238095238095
+    "recorded_at": "2026-11-20T13:16:23+00:00",
+    "value": 0.6774193548387096
   },
   "anomaly.rule_recall": {
     "context": {
       "best_model": "ensemble",
-      "injected_rows": 263
+      "injected_rows": 8
     },
-    "recorded_at": "2026-11-07T12:50:59+00:00",
-    "value": 0.09729272419627749
+    "recorded_at": "2026-11-20T13:16:23+00:00",
+    "value": 0.04411764705882353
   },
   "batch.best_partitions": {
     "context": {
@@ -131,151 +131,152 @@
     "context": {
       "months": [
         "2024-01",
-        "2024-02",
-        "2024-03"
+        "2024-02"
       ]
     },
-    "recorded_at": "2026-11-07T12:01:10+00:00",
+    "recorded_at": "2026-11-20T13:14:23+00:00",
     "value": 0.0
   },
   "dq.max_reconciliation_diff": {
     "context": {
       "months": [
         "2024-01",
-        "2024-02",
-        "2024-03"
+        "2024-02"
       ]
     },
-    "recorded_at": "2026-11-07T12:01:00+00:00",
+    "recorded_at": "2026-11-20T13:14:21+00:00",
     "value": 0.0
   },
   "dq.max_reject_rate_pct": {
     "context": {
       "months": [
         "2024-01",
-        "2024-02",
-        "2024-03"
+        "2024-02"
       ]
     },
-    "recorded_at": "2026-11-07T12:01:00+00:00",
-    "value": 4.771
+    "recorded_at": "2026-11-20T13:14:21+00:00",
+    "value": 3.194
   },
   "dq.silver_duplicates": {
     "context": {
       "months": [
         "2024-01",
-        "2024-02",
-        "2024-03"
+        "2024-02"
       ]
     },
-    "recorded_at": "2026-11-07T12:01:00+00:00",
+    "recorded_at": "2026-11-20T13:14:21+00:00",
     "value": 0.0
   },
   "features.build_min": {
     "context": {
-      "efficiencies": [
-        1.0219513349603022,
-        0.8485438479399673
-      ],
-      "rows": {
-        "large": 20332093,
-        "medium": 9554778,
-        "small": 2964624
-      }
+      "months": [
+        "2024-01",
+        "2024-02"
+      ]
     },
-    "recorded_at": "2026-11-17T18:20:12+00:00",
-    "value": 0.05664129723324247
+    "recorded_at": "2026-11-20T13:14:25+00:00",
+    "value": 0.03091261898331747
   },
   "ml.best_mae": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 4.760166099557838
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 2.2187829020354544
   },
   "ml.best_mape_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 19.703822191071787
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 21.500810929065178
   },
   "ml.best_r2": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 0.9659674117418144
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 0.7547837192408533
   },
   "ml.best_rmse": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 12.110591357983823
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 3.002669605486587
   },
   "ml.best_wape_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 16.511961523531603
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 28.391928842115288
   },
   "ml.gbt_train_min": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 2.231270663200606
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 1.4551540849833449
   },
   "ml.gbt_vs_lr_mae_improvement_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": -9.64161808506082
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": -6.952862717295459
   },
   "ml.inference_rows_per_s": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 30448.871089529046
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 11409.724691531464
   },
   "ml.mae_improvement_vs_persistence_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 38.564755432572596
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 29.237481913933035
   },
   "ml.mae_improvement_vs_seasonal_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 19.931194134616334
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 29.89594618545395
   },
   "ml.peak_wape_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 14.160307613531735
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 24.32357563700359
   },
   "ml.worst_borough_wape_pct": {
     "context": {
       "best_model": "ensemble"
     },
-    "recorded_at": "2026-11-07T12:49:53+00:00",
-    "value": 111.87651868707594
+    "recorded_at": "2026-11-20T13:16:17+00:00",
+    "value": 30.69813489432444
   },
   "repro.sample_e2e_min": {
     "context": {
-      "source": "manual"
+      "stages": {
+        "analytics": 3.6,
+        "anomaly": 6.6,
+        "bronze": 5.3,
+        "demand": 1.9,
+        "export": 1.6,
+        "features": 1.9,
+        "ml": 108.3,
+        "sample": 0.6,
+        "silver": 5.8
+      }
     },
-    "recorded_at": "2026-11-17T17:34:14+00:00",
-    "value": 3.066666666666667
+    "recorded_at": "2026-11-20T13:16:25+00:00",
+    "value": 2.2828773877166593
   },
   "stream.batch_agreement_pct": {
     "context": {

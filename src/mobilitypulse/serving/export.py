@@ -24,6 +24,7 @@ INDEXES = {
     "demand_profile": ["zone_id"],
     "top_zones_daily": ["date"],
     "stream_latest": ["zone_id"],
+    "data_quality_daily": ["date"],
 }
 
 
@@ -86,6 +87,7 @@ def build_tables(cfg: Config) -> dict[str, pd.DataFrame]:
         f = gold / name / f"{name}.parquet"
         tables[name] = _clean(pd.read_parquet(f)) if f.exists() else None
     tables["anomalies"] = _read(gold / "anomalies")
+    tables["data_quality_daily"] = _read(gold / "data_quality_daily")
     tables["stream_latest"] = _latest_stream(cfg.path("stream_out"))
     return {k: v for k, v in tables.items() if v is not None}
 

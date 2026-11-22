@@ -59,6 +59,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         require_db()
         return q.stream_latest(zone_id)
 
+    @app.get("/data-quality")
+    def data_quality(start: datetime | None = None, end: datetime | None = None, alerts_only: bool = False,
+                     include_unattributed: bool = False, limit: int = Query(500, ge=1, le=5000)):
+        """Daily row counts, null rates, rejects by reason, freshness and reject-rate alert flags."""
+        require_db()
+        return q.data_quality_daily(ts(start)[:10] if start else None, ts(end)[:10] if end else None, alerts_only,
+                                    include_unattributed, limit)
+
     @app.get("/analytics/{name}")
     def analytics(name: str, limit: int = Query(500, ge=1, le=5000)):
         require_db()

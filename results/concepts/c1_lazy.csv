@@ -1,0 +1,10 @@
+step,kind,seconds,spark_jobs
+1 filter,transformation,0.053,0
+2 withColumn,transformation,0.046,0
+3 join zones,transformation,0.0413,0
+4 groupBy,transformation,0.0396,0
+5 orderBy,transformation,0.0217,0
+6 explain (plan only),plan,0.2877,0
+7 count() ACTION,action,1.1579,4
+8 collect() ACTION,action,0.6276,5
+9 count() again (no cache),action,0.2682,4

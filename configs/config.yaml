@@ -16,6 +16,7 @@ paths:
   gold: "{data_dir}/gold"
   quarantine: "{data_dir}/quarantine"
   models: "{data_dir}/models"
+  state: "{data_dir}/state"       # pipeline_state.parquet: per-month stage status for incremental runs
   checkpoints: "{data_dir}/checkpoints"
   serving_db: "{data_dir}/serving/mobilitypulse.db"
   stream_out: "{data_dir}/gold/stream_zone_metrics"
@@ -63,6 +64,7 @@ quality:
   min_location_id: 1
   max_location_id: 263          # 264/265 are "Unknown"/"Outside of NYC" in the zone lookup
   max_speed_mph: 100
+  alert_reject_rate_pct: 8.0    # gold.data_quality_daily flags a day when more than this share of its rows is rejected
 
 features:
   lags: [1, 2, 3, 23, 24, 168]
@@ -79,6 +81,13 @@ ml:
   models: [linear_regression, random_forest, gbt]
   log_target_models: [random_forest, gbt]   # fit on log1p(label): errors scale with volume
   ensemble: true                # validation-weighted blend of the two best models, added as model "ensemble"
+  tuning:
+    enabled: false              # validation-only GBT grid search (Plan 4.5); multiplies GBT fit time by len(gbt_grid)
+    gbt_grid:                   # each trial is fitted on train and scored on validation MAE; test is never used
+      - {max_depth: 6, max_iter: 150, step_size: 0.1}
+      - {max_depth: 8, max_iter: 150, step_size: 0.1}
+      - {max_depth: 8, max_iter: 300, step_size: 0.05}
+      - {max_depth: 10, max_iter: 150, step_size: 0.1}
   gbt:
     max_iter: 150
     max_depth: 8

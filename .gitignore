@@ -36,4 +36,3 @@ __pycache__/
 # SetupE settings and secrets (see setupE.env.example)
 .env.setupE
 .env.setupF
-

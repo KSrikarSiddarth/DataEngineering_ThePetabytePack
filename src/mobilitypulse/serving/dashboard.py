@@ -30,7 +30,7 @@ zones = pd.DataFrame(q.zones())
 zone_label = {r.zone_id: f"{r.zone_id} - {r.zone_name} ({r.borough})" for r in zones.itertuples()}
 
 page = st.sidebar.radio("View", ["Overview", "Demand heatmap", "Forecast vs actual", "Anomalies", "Weather impact",
-                                 "Live stream", "Benchmarks & scorecard"])
+                                 "Data quality", "Live stream", "Benchmarks & scorecard"])
 
 
 def pick_zone(key: str, candidates: list[int]) -> int:
@@ -97,6 +97,52 @@ elif page == "Weather impact":
                            facet_col="borough", facet_col_wrap=3, title="Pickups per hour by weather"),
                     width="stretch")
     st.dataframe(wi, width="stretch")
+
+elif page == "Data quality":
+    dq = pd.DataFrame(q.data_quality_daily(include_unattributed=True))
+    if dq.empty:
+        st.info("No data-quality table yet - run the silver stage, then `make export`.")
+    else:
+        days = dq[dq["day_kind"] == "day"].copy()
+        loose = dq[dq["day_kind"] == "unattributed"]
+        threshold = float(days["alert_threshold_pct"].iloc[0]) if len(days) else 8.0
+        alerts = days[days["alert_reject_rate"] == 1]
+        newest_event = pd.to_datetime(days["max_pickup_ts"]).max()
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Days monitored", len(days))
+        c2.metric(f"Alert days (reject rate > {threshold:g}%)", len(alerts),
+                  delta="needs attention" if len(alerts) else "all clear", delta_color="inverse")
+        c3.metric("Overall reject rate", f"{100 * dq['rejected_rows'].sum() / max(dq['input_rows'].sum(), 1):.2f}%")
+        c4.metric("Newest event in data", newest_event.strftime("%Y-%m-%d %H:%M"),
+                  delta=f"{(pd.Timestamp.now() - newest_event).days} days old", delta_color="off")
+
+        days["date"] = pd.to_datetime(days["date"])
+        fig = px.line(days, x="date", y="reject_rate_pct", markers=True, title="Reject rate per day (%)")
+        fig.add_hline(y=threshold, line_dash="dash", line_color="red", annotation_text=f"alert > {threshold:g}%")
+        st.plotly_chart(fig, width="stretch")
+
+        reason_cols = [c for c in days.columns if c.startswith("rej_")]
+        by_reason = days.melt(id_vars="date", value_vars=reason_cols, var_name="reason", value_name="rows")
+        by_reason["reason"] = by_reason["reason"].str.removeprefix("rej_").str.upper()
+        st.plotly_chart(px.bar(by_reason, x="date", y="rows", color="reason", title="Rejected rows per day by reason"),
+                        width="stretch")
+
+        null_cols = [c for c in days.columns if c.startswith("null_pct_")]
+        st.subheader("Null rate per column (% of rows)")
+        st.dataframe(days.set_index("date")[null_cols].rename(columns=lambda c: c.removeprefix("null_pct_")),
+                     width="stretch")
+
+        st.subheader("Alert days")
+        if alerts.empty:
+            st.success(f"No day exceeded the {threshold:g}% reject-rate threshold.")
+        else:
+            st.dataframe(alerts[["date", "input_rows", "rejected_rows", "reject_rate_pct"]], width="stretch")
+        if not loose.empty:
+            st.caption("Rows with a null or out-of-month timestamp cannot be placed on a day; they are counted here "
+                       "and never raise an alert.")
+            st.dataframe(loose[["source_month", "input_rows", "rejected_rows"]], width="stretch")
+        with st.expander("Freshness per day (ingest lag = ingested_at - newest event of that day)"):
+            st.dataframe(days[["date", "max_pickup_ts", "ingested_at", "ingest_lag_h"]], width="stretch")
 
 elif page == "Live stream":
     st.button("Refresh")

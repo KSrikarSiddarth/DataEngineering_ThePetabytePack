@@ -85,6 +85,9 @@ def build_silver_trips(spark: SparkSession, cfg: Config, months: list[str], broa
     write_parquet(rejected.coalesce(4), q_path, partition_by=["source_month"])
 
     reports = dq_report(flagged, months) if report else {}
+    if report:
+        from .dq_daily import write_dq_daily  # local import: dq_daily imports NULL_CHECK_COLUMNS from this module
+        write_dq_daily(flagged, cfg, months)
     flagged.unpersist()
     if not report:
         return {}

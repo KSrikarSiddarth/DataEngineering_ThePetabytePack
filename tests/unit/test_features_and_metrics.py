@@ -45,3 +45,29 @@ def test_profile_feature_uses_train_only_and_leave_one_out(spark):
     out = {(r["split"], r["label"]): r["zone_how_mean"] for r in add_profile_features(df).collect()}
     assert out[("train", 10.0)] == pytest.approx(25.0)      # (20 + 30) / 2, own label excluded
     assert out[("test", 1000.0)] == pytest.approx(20.0)      # mean of train labels only
+
+
+def test_poisson_mad_matches_known_values_and_brute_force():
+    import math
+
+    from mobilitypulse.ml.metrics import poisson_mad
+
+    assert poisson_mad(0) == 0.0 and poisson_mad(None) == 0.0
+    assert poisson_mad(1.0) == pytest.approx(2 / math.e)          # textbook value for Poisson(1)
+    for lam in (0.3, 1.08, 4.5, 20.0, 150.0):                      # against the definition, summed directly
+        pmf, brute = math.exp(-lam), 0.0
+        for k in range(0, int(lam * 4 + 60)):
+            brute += abs(k - lam) * pmf
+            pmf *= lam / (k + 1)
+        assert poisson_mad(lam) == pytest.approx(brute, rel=1e-6)
+
+
+def test_poisson_floor_by_group_separates_noisy_and_busy_groups(spark):
+    from mobilitypulse.ml.metrics import poisson_floor_by_group
+
+    # a low-volume group (rate ~1) and a busy one (rate ~100), both forecast perfectly on average
+    rows = [("quiet", 0.0, 1.0), ("quiet", 2.0, 1.0), ("quiet", 1.0, 1.0), ("busy", 95.0, 100.0), ("busy", 105.0, 100.0)]
+    df = spark.createDataFrame(rows, "borough string, actual double, predicted double")
+    out = {r["borough"]: r for r in poisson_floor_by_group(df, "borough").collect()}
+    assert out["quiet"]["floor_wape_pct"] == pytest.approx(100 * 3 * (2 / 2.718281828459045) / 3.0, rel=1e-6)
+    assert out["busy"]["floor_wape_pct"] < 10 < out["quiet"]["floor_wape_pct"]  # same method, very different floor

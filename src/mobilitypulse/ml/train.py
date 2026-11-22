@@ -13,7 +13,7 @@ from pyspark.sql import functions as F
 
 from ..common.config import Config
 from ..common.utils import Timer, get_logger, read_parquet, record_measurements, write_parquet
-from .metrics import grouped_regression_metrics
+from .metrics import grouped_regression_metrics, poisson_floor_by_group
 
 log = get_logger(__name__)
 
@@ -124,6 +124,40 @@ def ensemble_predictions(model_preds: list[DataFrame]) -> tuple[DataFrame, dict]
     return ens.select(*KEY_COLS, "model", "actual", "predicted"), {"members": [a, b], "weight": w}
 
 
+def tuning_enabled(cfg: Config) -> bool:
+    return bool((cfg.section("ml").get("tuning") or {}).get("enabled"))
+
+
+def validation_mae(cfg: Config, model: PipelineModel, name: str, validation: DataFrame) -> float:
+    pred = F.expm1("prediction") if uses_log_target(cfg, name) else F.col("prediction")
+    return float(model.transform(validation).select(
+        F.avg(F.abs(F.greatest(pred, F.lit(0.0)) - F.col("label")))).first()[0])
+
+
+def tune_gbt(cfg: Config, train: DataFrame, validation: DataFrame) -> tuple[PipelineModel, dict]:
+    """Validation-only grid search: fit each configured candidate on train, keep the lowest validation MAE.
+
+    The test split is never touched. Returns the winning fitted model plus a record of every trial.
+    """
+    grid = (cfg.section("ml").get("tuning") or {}).get("gbt_grid") or []
+    if not grid:
+        raise ValueError("ml.tuning.enabled is true but ml.tuning.gbt_grid is empty")
+    trials, best = [], None
+    for params in grid:
+        trial_cfg = cfg.with_overrides({"ml": {"gbt": params}})
+        with Timer() as t:
+            model = build_pipeline(trial_cfg, "gbt").fit(train)
+        mae = validation_mae(trial_cfg, model, "gbt", validation)
+        trials.append({**params, "validation_mae": mae, "fit_seconds": t.seconds})
+        log.info("gbt tuning %s: validation MAE %.4f (fit %.1fs)", params, mae, t.seconds)
+        if best is None or mae < best[0]:
+            best = (mae, model, len(trials) - 1)
+    winner = trials[best[2]]
+    return best[1], {"best_params": {k: winner[k] for k in grid[0]}, "best_validation_mae": best[0],
+                     "best_fit_seconds": winner["fit_seconds"], "trials": trials,
+                     "tuning_seconds": sum(t["fit_seconds"] for t in trials)}
+
+
 def segment_column(peak_hours: list[int]) -> F.Column:
     peak = (F.col("target_day_of_week") <= 5) & (F.col("is_holiday") == 0) & F.col("target_hour_of_day").isin(peak_hours)
     return F.explode(F.array(
@@ -145,14 +179,22 @@ def train_and_evaluate(spark: SparkSession, cfg: Config) -> dict:
     predictions = [baseline_predictions(evals)]
     timings: dict[str, dict] = {}
     for name in mcfg["models"]:
-        with Timer() as t_fit:
-            model = build_pipeline(cfg, name).fit(train)
+        tuning = None
+        if name == "gbt" and tuning_enabled(cfg):
+            model, tuning = tune_gbt(cfg, train, feats.where("split = 'validation'"))
+            fit_seconds = tuning["best_fit_seconds"]  # O1 is about training the chosen model; tuning cost is separate
+        else:
+            with Timer() as t_fit:
+                model = build_pipeline(cfg, name).fit(train)
+            fit_seconds = t_fit.seconds
         with Timer() as t_inf:
             model.transform(test).write.format("noop").mode("overwrite").save()
         n_test = test.count()
-        timings[name] = {"train_seconds": t_fit.seconds, "infer_rows_per_sec": n_test / max(t_inf.seconds, 1e-9)}
+        timings[name] = {"train_seconds": fit_seconds, "infer_rows_per_sec": n_test / max(t_inf.seconds, 1e-9)}
+        if tuning:
+            timings[name]["tuning"] = tuning
         model.write().overwrite().save(str(cfg.path("models") / name))
-        log.info("%s: fit %.1fs, inference %.0f rows/s", name, t_fit.seconds, timings[name]["infer_rows_per_sec"])
+        log.info("%s: fit %.1fs, inference %.0f rows/s", name, fit_seconds, timings[name]["infer_rows_per_sec"])
         pred = F.expm1("prediction") if uses_log_target(cfg, name) else F.col("prediction")
         predictions.append(model.transform(evals).select(
             *[F.col(c) for c in KEY_COLS], F.lit(name).alias("model"), F.col("label").alias("actual"),
@@ -182,11 +224,12 @@ def train_and_evaluate(spark: SparkSession, cfg: Config) -> dict:
     out = cfg.path("gold") / "model_metrics"
     out.mkdir(parents=True, exist_ok=True)
     metrics.to_parquet(out / "model_metrics.parquet", index=False)
+    out_summary = summarise(cfg, metrics, timings, forecasts)
     feats.unpersist()
-    return summarise(cfg, metrics, timings)
+    return out_summary
 
 
-def summarise(cfg: Config, metrics: pd.DataFrame, timings: dict) -> dict:
+def summarise(cfg: Config, metrics: pd.DataFrame, timings: dict, forecasts: DataFrame | None = None) -> dict:
     overall = metrics[metrics["segment"] == "overall"].set_index(["model", "split"])
     ml_models = [m for m in [*cfg.section("ml")["models"], "ensemble"] if (m, "validation") in overall.index]
     best = min(ml_models, key=lambda m: overall.loc[(m, "validation"), "mae"])
@@ -215,7 +258,21 @@ def summarise(cfg: Config, metrics: pd.DataFrame, timings: dict) -> dict:
     if "gbt" in ml_models and "linear_regression" in ml_models:
         lr, gbt = test_metric("linear_regression", "mae"), test_metric("gbt", "mae")
         values["ml.gbt_vs_lr_mae_improvement_pct"] = 100 * (lr - gbt) / lr if lr else None
-    record_measurements(cfg, values, {"best_model": best})
+
+    context = {"best_model": best}
+    # Diagnostic for M8: how much of the worst borough's WAPE is just Poisson count noise (see poisson_mad)?
+    if forecasts is not None and boroughs:
+        floor = poisson_floor_by_group(forecasts.where((F.col("model") == best) & (F.col("split") == "test")),
+                                       "borough").toPandas().set_index("borough")
+        worst = max(boroughs, key=lambda b: test_seg.loc[b, "wape_pct"]).removeprefix("borough=")
+        if worst in floor.index:
+            values["ml.worst_borough_floor_wape_pct"] = float(floor.loc[worst, "floor_wape_pct"])
+            context.update(worst_borough=worst, worst_borough_mean_trips=float(floor.loc[worst, "mean_actual"]))
+    if "gbt" in timings and "tuning" in timings["gbt"]:
+        tuning = timings["gbt"]["tuning"]
+        values["ml.gbt_tuning_min"] = tuning["tuning_seconds"] / 60
+        context.update(gbt_params=tuning["best_params"], gbt_trials=len(tuning["trials"]))
+    record_measurements(cfg, values, context)
     log.info("best model=%s test metrics=%s", best,
              {k: round(v, 3) for k, v in values.items() if isinstance(v, float)})
     return {"best_model": best, **values}

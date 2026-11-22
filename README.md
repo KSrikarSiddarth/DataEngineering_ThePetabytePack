@@ -70,7 +70,7 @@ automatically — no `source activate` needed. To use the venv by hand: `source 
 
 ```bash
 make test-fast    # unit tests only, ~25 s
-make test         # all 64 tests incl. Spark integration on synthetic data, ~75 s, coverage -> results/tests/
+make test         # all 87 tests incl. Spark integration on synthetic data, ~3.5 min, coverage -> results/tests/
 make demo         # synthetic data through every stage in ~1 min, written to ~/mobilitypulse_sample
 ```
 
@@ -162,9 +162,10 @@ make dashboard    # Streamlit -> http://127.0.0.1:8501
 | `GET /metrics/latest` | forecast + anomaly evaluation metrics |
 | `GET /stream/latest?zone_id=161` | latest streaming windows |
 | `GET /analytics/{demand_profile,top_zones_daily,weather_impact,borough_summary,zone_volatility,od_flows}` | gold tables |
+| `GET /data-quality?alerts_only=true` | daily row counts, null rates, rejects by reason, freshness, alert flags |
 
-Dashboard pages: Overview · Demand heatmap · Forecast vs actual · Anomalies · Weather impact · Live stream ·
-Benchmarks & scorecard.
+Dashboard pages: Overview · Demand heatmap · Forecast vs actual · Anomalies · Weather impact · Data quality ·
+Live stream · Benchmarks & scorecard.
 
 To view the synthetic demo instead of real data, prefix the command:
 `MOBILITYPULSE_DATA_DIR=~/mobilitypulse_sample make dashboard`.
@@ -185,6 +186,19 @@ Single streaming experiments: `~/.venvs/mp311/bin/python -m mobilitypulse.benchm
 single batch experiments: `... -m mobilitypulse.benchmark.batch_bench e1 e3`.
 Targets are fixed in [configs/targets.yaml](configs/targets.yaml); every FAIL must be explained in the report
 (see [docs/04_evaluation.md](docs/04_evaluation.md)).
+
+### 7.1 Extras: Spark internals pack, incremental runs, daily data quality
+
+```bash
+make concepts                              # lazy evaluation, narrow/wide, skew, silver-vs-gold -> results/concepts/
+make incremental MONTHS=2024-01..2024-06   # only new / unfinished / changed months; state in <data_dir>/state/
+MP__ML__TUNING__ENABLED=true make ml       # optional validation-only GBT grid search (off by default)
+```
+
+See [docs/07_spark_internals.md](docs/07_spark_internals.md) and
+[docs/08_incremental_and_dq.md](docs/08_incremental_and_dq.md). The silver stage now also writes
+`gold/data_quality_daily` (shown on the dashboard's **Data quality** page). Root causes of the FAILs that were
+investigated are in [docs/04_evaluation.md](docs/04_evaluation.md) §6.
 
 ## 8. Configuration
 
@@ -235,11 +249,12 @@ infra/              docker-compose.yml (Kafka), kafka/Dockerfile + create-topics
 src/mobilitypulse/
   common/           config, Spark session factory, IO/timing/measurement helpers
   ingestion/        download.py (idempotent + manifest + content checks), sample.py (synthetic raw data)
-  batch/            bronze.py, quality.py, silver.py, demand.py, features.py, analytics.py
+  batch/            bronze.py, quality.py, silver.py, demand.py, features.py, analytics.py,
+                    dq_daily.py (gold.data_quality_daily), incremental.py (state table, watermark)
   ml/               train.py (baselines + LR/RF/GBT), anomaly.py, metrics.py
   streaming/        producer.py (Kafka replay), stream_job.py (Structured Streaming)
   serving/          export.py (gold -> SQLite), queries.py, api.py (FastAPI), dashboard.py (Streamlit)
-  benchmark/        harness.py, batch_bench.py, stream_bench.py, scorecard.py
+  benchmark/        harness.py, batch_bench.py, stream_bench.py, concepts.py (Spark internals), scorecard.py
   cli.py            pipeline entry point (python -m mobilitypulse.cli --stage ...)
 scripts/            run_pipeline.py, record_measurement.py
 tests/              unit/ and integration/ (pytest -m "not integration" for the fast subset)
@@ -248,7 +263,7 @@ results_two_years/  two-year run (other machine): measurements, scorecard, DQ re
 report/             final report (MobilityPulse_Report.docx / .md), figures/, make_figures.py
 ```
 
-Data directory (`~/mobilitypulse_data`): `raw/ bronze/ silver/ gold/ quarantine/ models/ checkpoints/ serving/ bench/`
+Data directory (`~/mobilitypulse_data`): `raw/ bronze/ silver/ gold/ quarantine/ models/ checkpoints/ state/ serving/ bench/`
 — see [Data_Pipeline_and_Layers.md](Data_Pipeline_and_Layers.md) §9.
 
 ## 12. Data sources and licences

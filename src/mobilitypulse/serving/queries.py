@@ -83,6 +83,17 @@ class Queries:
             "updated_at FROM stream_latest WHERE (? IS NULL OR zone_id = ?) ORDER BY window_start DESC, trip_count DESC "
             "LIMIT ?", (zone_id, zone_id, MAX_ROWS))
 
+    def data_quality_daily(self, start: str | None = None, end: str | None = None, alerts_only: bool = False,
+                           include_unattributed: bool = False, limit: int = MAX_ROWS) -> list[dict]:
+        """Daily data-quality rows (oldest first). Unattributed rows (no usable day) are opt-in."""
+        if not self.has_table("data_quality_daily"):
+            return []
+        return self._rows(
+            "SELECT * FROM data_quality_daily WHERE (? = 1 OR day_kind = 'day') "
+            "AND (date IS NULL OR date >= COALESCE(?, '')) AND (date IS NULL OR date < COALESCE(?, '9999')) "
+            "AND (? = 0 OR alert_reject_rate = 1) ORDER BY source_month, date LIMIT ?",
+            (int(include_unattributed), start, end, int(alerts_only), min(limit, MAX_ROWS)))
+
     def analytics(self, name: str, limit: int = 1000) -> list[dict]:
         if name not in ANALYTICS_TABLES:
             raise KeyError(name)

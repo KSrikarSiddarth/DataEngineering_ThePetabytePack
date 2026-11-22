@@ -16,7 +16,7 @@ from .common.utils import Timer, get_logger, parse_months, record_measurements
 log = get_logger("mobilitypulse")
 
 BATCH_STAGES = ["bronze", "silver", "demand", "features", "analytics", "ml", "anomaly", "export"]
-STAGES = ["sample", "ingest", *BATCH_STAGES, "scorecard", "all", "demo"]
+STAGES = ["sample", "ingest", *BATCH_STAGES, "incremental", "scorecard", "all", "demo"]
 
 
 def run_stage(stage: str, cfg, months: list[str], force: bool = False, spark=None):
@@ -59,6 +59,9 @@ def run_stage(stage: str, cfg, months: list[str], force: bool = False, spark=Non
     if stage == "anomaly":
         from .ml.anomaly import run_anomaly
         return run_anomaly(spark, cfg)
+    if stage == "incremental":
+        from .batch.incremental import run_incremental
+        return run_incremental(spark, cfg, months, force)
     raise ValueError(stage)
 
 
@@ -85,7 +88,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="NYC MobilityPulse pipeline")
     ap.add_argument("--stage", choices=STAGES, default="all")
     ap.add_argument("--months", help="small|medium|large, YYYY-MM..YYYY-MM or comma list (default: datasets.default)")
-    ap.add_argument("--force", action="store_true", help="re-download even if unchanged")
+    ap.add_argument("--force", action="store_true",
+                    help="ingest: re-download even if unchanged; incremental: reprocess even if up to date")
     a = ap.parse_args()
     cfg = load_config()
     log.info("data dir: %s", cfg.data_dir)
